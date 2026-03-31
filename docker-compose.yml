@@ -1,0 +1,77 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: medi_ai_postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: medi_ai
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - medi-ai-network
+    restart: unless-stopped
+
+  # Backend API (Python)
+  backend:
+    build:
+      context: ./frontend/medi-ai
+      dockerfile: ../Dockerfile
+    container_name: medi_ai_backend
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/medi_ai
+      - FLASK_ENV=production
+    ports:
+      - "5000:5000"
+    volumes:
+      - medi_ai_backend_data:/app/data
+      - ./frontend/medi-ai:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - medi-ai-network
+    restart: unless-stopped
+    command: python main.py
+
+  # Frontend (React)
+  frontend:
+    build:
+      context: ./frontend/medi-ai
+      dockerfile: Dockerfile
+    container_name: medi_ai_frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - medi_ai_frontend_data:/app
+      - ./frontend/medi-ai/src:/app/src
+    depends_on:
+      - backend
+    networks:
+      - medi-ai-network
+    restart: unless-stopped
+    environment:
+      - REACT_APP_API_URL=http://backend:5000
+      - REACT_APP_WS_URL=ws://backend:5000
+
+volumes:
+  postgres_data:
+    driver: local
+  medi_ai_backend_data:
+    driver: local
+  medi_ai_frontend_data:
+    driver: local
+
+networks:
+  medi-ai-network:
+    driver: bridge
