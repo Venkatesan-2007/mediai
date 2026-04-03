@@ -209,10 +209,27 @@ _initialize_default_books()
 class RegisterRequest(BaseModel):
     username: str
     password: str
+    
+    @property
+    def password_truncated(self) -> str:
+        """Get password truncated to 72 bytes (bcrypt limit)."""
+        password_bytes = self.password.encode('utf-8')
+        if len(password_bytes) > 72:
+            return password_bytes[:72].decode('utf-8', errors='ignore')
+        return self.password
+
 
 class LoginRequest(BaseModel):
     username: str
     password: str
+    
+    @property
+    def password_truncated(self) -> str:
+        """Get password truncated to 72 bytes (bcrypt limit)."""
+        password_bytes = self.password.encode('utf-8')
+        if len(password_bytes) > 72:
+            return password_bytes[:72].decode('utf-8', errors='ignore')
+        return self.password
 
 class AuthResponse(BaseModel):
     access_token: str
@@ -292,24 +309,18 @@ async def register(request: RegisterRequest, db: Session = Depends(get_db)):
         if not request.username or len(request.username.strip()) < 3:
             raise HTTPException(status_code=400, detail="Username must be at least 3 characters")
         
-        # Validate password length (bcrypt max is 72 bytes)
-        password = str(request.password).strip()
-        password_bytes = password.encode('utf-8')
+        # Get truncated password (auto-handles bcrypt 72-byte limit)
+        password = request.password_truncated
         
         if len(password) < 6:
             raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
-        
-        if len(password_bytes) > 72:
-            # Truncate to 72 bytes (bcrypt limit)
-            logger.warning(f"Password exceeds 72 bytes, truncating for user '{request.username}'")
-            password = password_bytes[:72].decode('utf-8', errors='ignore')
         
         # Check if user already exists
         existing_user = db.query(User).filter(User.username == request.username).first()
         if existing_user:
             raise HTTPException(status_code=400, detail="Username already exists")
         
-        # Create new user with validated password
+        # Hash password (will be truncated again as safety measure)
         hashed_password = hash_password(password)
         new_user = User(
             username=request.username,
@@ -346,11 +357,8 @@ async def login(request: LoginRequest, db: Session = Depends(get_db)):
         if not user:
             raise HTTPException(status_code=401, detail="Invalid username or password")
         
-        # Truncate password to 72 bytes for verification (same as registration)
-        password = str(request.password).strip()
-        password_bytes = password.encode('utf-8')
-        if len(password_bytes) > 72:
-            password = password_bytes[:72].decode('utf-8', errors='ignore')
+        # Get truncated password (auto-handles bcrypt 72-byte limit)
+        password = request.password_truncated
         
         # Verify password
         if not verify_password(password, user.password_hash):

@@ -36,30 +36,34 @@ def hash_password(password: str) -> str:
     bcrypt has a 72-byte limit on passwords. If password exceeds this,
     it will be truncated before hashing.
     """
-    # Ensure password is a string and strip whitespace
-    if not isinstance(password, str):
-        password = str(password)
+    # Input validation
+    if password is None:
+        raise ValueError("Password cannot be None")
     
-    password_str = password.strip()
+    # Ensure password is a string and clean it
+    password_str = str(password).strip()
     
-    # Truncate to 72 bytes (bcrypt's maximum)
-    # Important: we must truncate BEFORE passing to bcrypt
-    if len(password_str.encode('utf-8')) > 72:
-        # Truncate UTF-8 bytes safely
-        password_bytes = password_str.encode('utf-8')[:72]
-        # Decode, ignoring any incomplete multibyte characters at the boundary
+    if not password_str:
+        raise ValueError("Password cannot be empty")
+    
+    # Get the byte representation
+    password_bytes = password_str.encode('utf-8')
+    
+    # **CRITICAL**: Truncate to 72 bytes BEFORE hashing
+    # bcrypt WILL fail on anything longer
+    if len(password_bytes) > 72:
+        print(f"[WARN] Password is {len(password_bytes)} bytes, truncating to 72 for bcrypt")
+        # Truncate UTF-8 bytes safely, handling multi-byte characters
+        password_bytes = password_bytes[:72]
+        # Decode back to string, ignoring incomplete multi-byte sequences
         password_str = password_bytes.decode('utf-8', errors='ignore')
     
-    # Hash the (possibly truncated) password
-    try:
-        hashed = pwd_context.hash(password_str)
-        return hashed
-    except ValueError as e:
-        # If hashing still fails, truncate more aggressively
-        if 'password_has_invalid_bytes' in str(e) or 'password' in str(e):
-            password_str = password_str[:60]  # Extra safe truncation
-            return pwd_context.hash(password_str)
-        raise
+    # Final validation before hash
+    if len(password_str.encode('utf-8')) > 72:
+        raise ValueError(f"Password still {len(password_str.encode('utf-8'))} bytes after truncation!")
+    
+    # Hash the password
+    return pwd_context.hash(password_str)
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
