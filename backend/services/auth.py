@@ -1,14 +1,11 @@
 """Authentication service with password hashing and JWT token generation."""
 
-from passlib.context import CryptContext
+import bcrypt
 from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
 import os
 from pydantic import BaseModel
-
-# Password hashing configuration
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # JWT configuration
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-this-in-production")
@@ -31,7 +28,7 @@ class TokenResponse(BaseModel):
 
 
 def hash_password(password: str) -> str:
-    """Hash a password using bcrypt.
+    """Hash a password using bcrypt directly.
     
     bcrypt has a 72-byte limit on passwords. If password exceeds this,
     it will be truncated before hashing.
@@ -62,12 +59,13 @@ def hash_password(password: str) -> str:
     if len(password_str.encode('utf-8')) > 72:
         raise ValueError(f"Password still {len(password_str.encode('utf-8'))} bytes after truncation!")
     
-    # Hash the password
-    return pwd_context.hash(password_str)
+    # Hash the password directly with bcrypt
+    hashed = bcrypt.hashpw(password_str.encode('utf-8'), bcrypt.gensalt())
+    return hashed.decode('utf-8')
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a plain password against its hash.
+    """Verify a plain password against its hash using bcrypt directly.
     
     Apply the same truncation as hash_password for consistency.
     """
@@ -78,7 +76,13 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         # Truncate UTF-8 bytes and decode back to string
         password_bytes = password_bytes[:72]
         password_str = password_bytes.decode('utf-8', errors='ignore')
-    return pwd_context.verify(password_str, hashed_password)
+    
+    # Verify directly with bcrypt
+    try:
+        return bcrypt.checkpw(password_str.encode('utf-8'), hashed_password.encode('utf-8'))
+    except Exception as e:
+        print(f"[ERROR] Bcrypt verification failed: {e}")
+        return False
 
 
 def create_access_token(user_id: int, username: str, expires_delta: Optional[timedelta] = None) -> str:
