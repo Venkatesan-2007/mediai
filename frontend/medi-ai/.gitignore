@@ -1,0 +1,26 @@
+# Project dependencies
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+dist/
+build/
+
+# Environment
+.env
+.env.local
+
+# Database
+database/
+*.pkl
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
