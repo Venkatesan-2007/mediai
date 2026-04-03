@@ -1,9 +1,11 @@
 /**
- * Authentication & Chat Service - Backend API Integration
- * Handles chat API requests with JWT tokens
+ * Consolidated Authentication & API Service - Backend API Integration
+ * Handles authentication, chat, and PDF upload requests with JWT tokens
+ * Supports both chat with model selection and general API requests
  */
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+const CURRENT_USER_KEY = 'current_user';
 
 /**
  * Get authorization headers with JWT token
@@ -35,7 +37,7 @@ const getFormDataHeaders = () => {
 /**
  * Send chat message to backend
  * @param {string} question - User's question
- * @param {string} model - Chat mode ('rag' with documents or 'normal' general knowledge)
+ * @param {string} model - Chat mode ('rag' with documents or 'normal' general knowledge). Default: 'rag'
  * @returns {Promise} Response from API
  */
 export const sendMessage = async (question, model = 'rag') => {
@@ -55,23 +57,6 @@ export const sendMessage = async (question, model = 'rag') => {
 // ============================================================================
 // PDF UPLOAD ENDPOINTS
 // ============================================================================
-
-/**
- * Get list of uploaded PDFs for current user
- * @returns {Promise} Response containing list of books
- */
-export const getUploadedBooks = async () => {
-  const response = await fetch(`${API_URL}/api/uploaded-pdfs`, {
-    method: 'GET',
-    headers: getAuthHeaders(),
-  });
-
-  if (!response.ok) {
-    throw new Error(`API error: ${response.statusText}`);
-  }
-
-  return response.json();
-};
 
 /**
  * Upload a PDF file
@@ -95,22 +80,39 @@ export const uploadPDF = async (file) => {
   return response.json();
 };
 
-// ============================================================================
-// STATUS ENDPOINT
-// ============================================================================
-
 /**
- * Get system status
- * @returns {Promise} Response containing status information
+ * Get list of uploaded PDFs for current user
+ * @returns {Promise} Response containing list of books
  */
-export const getStatus = async () => {
-  const response = await fetch(`${API_URL}/api/status`, {
+export const getUploadedBooks = async () => {
+  const response = await fetch(`${API_URL}/api/uploaded-pdfs`, {
     method: 'GET',
     headers: getAuthHeaders(),
   });
 
   if (!response.ok) {
     throw new Error(`API error: ${response.statusText}`);
+  }
+
+  return response.json();
+};
+
+// ============================================================================
+// STATUS ENDPOINT
+// ============================================================================
+
+/**
+ * Get API status
+ * @returns {Promise} Response containing API status
+ */
+export const getApiStatus = async () => {
+  const response = await fetch(`${API_URL}/api/status`, {
+    method: 'GET',
+    headers: getAuthHeaders(),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Status error: ${response.statusText}`);
   }
 
   return response.json();

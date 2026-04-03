@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Navbar from '../../../shared/components/Navbar';
 import MessageBubble from '../components/MessageBubble';
 import { useAuth } from '../../../shared/contexts/AuthContext';
-import { sendMessage, getUploadedBooks } from '../services/authService';
+import { sendMessage, getUploadedBooks } from '../../../shared/services/authService';
 import '../../../shared/styles/Chat.css';
 
 /**

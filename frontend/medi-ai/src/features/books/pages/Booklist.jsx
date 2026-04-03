@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import Navbar from '../../../shared/components/Navbar';
 import SearchBar from '../components/SearchBar';
 import { useAuth } from '../../../shared/contexts/AuthContext';
-import { uploadPDF, getUploadedBooks } from '../services/authService';
+import { uploadPDF, getUploadedBooks } from '../../../shared/services/authService';
 
 /**
  * Booklist Page Component

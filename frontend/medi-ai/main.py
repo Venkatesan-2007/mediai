@@ -31,7 +31,7 @@ from services.database import init_db, get_db, User, Book, engine, Base
 from services.auth import hash_password, verify_password, create_access_token, verify_access_token
 from services.prescription_service import PrescriptionGenerationService, PrescriptionResponse
 from services.cache import search_cache
-from ocr import router as ocr_router
+from services.ocr_service import router as ocr_router
 
 # Configure structured logging
 logging.basicConfig(
