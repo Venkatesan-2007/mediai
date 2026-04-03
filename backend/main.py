@@ -257,6 +257,12 @@ class StatusResponse(BaseModel):
     num_chunks: int
     message: str
 
+class UserStatsResponse(BaseModel):
+    """User statistics for dashboard."""
+    progress_score: float
+    recent_activity: int
+    average_rating: float
+
 class BookMetadata(BaseModel):
     id: int
     filename: str
@@ -411,6 +417,29 @@ async def get_cache_stats(current_user: User = Depends(get_current_user)):
         "status": "success",
         "cache_stats": search_cache.get_stats()
     }
+
+@app.get("/api/user-stats", response_model=UserStatsResponse)
+async def get_user_stats(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Get user statistics for dashboard."""
+    # Count user's uploaded books
+    books_count = db.query(Book).filter(Book.user_id == current_user.id).count()
+    
+    # Calculate progress score based on uploaded books (0-100 scale)
+    # 0 books = 0, 5+ books = 100
+    progress_score = min(100, (books_count / 5) * 100) if books_count > 0 else 0
+    
+    # Recent activity is the number of books uploaded
+    recent_activity = books_count
+    
+    # Average rating (placeholder - can be enhanced with user interactions)
+    # For now, return a value based on activity level
+    average_rating = (progress_score / 100) * 5.0  # Scale from 0-5 based on progress
+    
+    return UserStatsResponse(
+        progress_score=progress_score,
+        recent_activity=recent_activity,
+        average_rating=average_rating
+    )
 
 @app.get("/debug/vector-store-info")
 async def debug_vector_store():
