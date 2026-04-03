@@ -18,7 +18,11 @@ from typing import Optional, List
 from sqlalchemy.orm import Session
 import logging
 import asyncio
+import warnings
 from contextlib import asynccontextmanager
+
+# Suppress HuggingFace transformers deprecation warnings
+warnings.filterwarnings('ignore', message='.*Accessing.*app.*from.*models')
 
 from services.pdf_loader import PDFLoader
 from services.chunking import TextChunker
@@ -284,13 +288,29 @@ async def get_current_user(
 async def register(request: RegisterRequest, db: Session = Depends(get_db)):
     """Register a new user with username and password."""
     try:
+        # Validate username
+        if not request.username or len(request.username.strip()) < 3:
+            raise HTTPException(status_code=400, detail="Username must be at least 3 characters")
+        
+        # Validate password length (bcrypt max is 72 bytes)
+        password = str(request.password).strip()
+        password_bytes = password.encode('utf-8')
+        
+        if len(password) < 6:
+            raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+        
+        if len(password_bytes) > 72:
+            # Truncate to 72 bytes (bcrypt limit)
+            logger.warning(f"Password exceeds 72 bytes, truncating for user '{request.username}'")
+            password = password_bytes[:72].decode('utf-8', errors='ignore')
+        
         # Check if user already exists
         existing_user = db.query(User).filter(User.username == request.username).first()
         if existing_user:
             raise HTTPException(status_code=400, detail="Username already exists")
         
-        # Create new user
-        hashed_password = hash_password(request.password)
+        # Create new user with validated password
+        hashed_password = hash_password(password)
         new_user = User(
             username=request.username,
             password_hash=hashed_password
@@ -298,6 +318,8 @@ async def register(request: RegisterRequest, db: Session = Depends(get_db)):
         db.add(new_user)
         db.commit()
         db.refresh(new_user)
+        
+        logger.info(f"User '{request.username}' registered successfully")
         
         # Create access token
         access_token = create_access_token(new_user.id, new_user.username)
@@ -311,7 +333,7 @@ async def register(request: RegisterRequest, db: Session = Depends(get_db)):
         raise
     except Exception as e:
         db.rollback()
-        print(f"Registration error: {str(e)}")
+        logger.error(f"Registration error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Registration failed: {str(e)}")
 
 
@@ -321,8 +343,20 @@ async def login(request: LoginRequest, db: Session = Depends(get_db)):
     try:
         # Find user by username
         user = db.query(User).filter(User.username == request.username).first()
-        if not user or not verify_password(request.password, user.password_hash):
+        if not user:
             raise HTTPException(status_code=401, detail="Invalid username or password")
+        
+        # Truncate password to 72 bytes for verification (same as registration)
+        password = str(request.password).strip()
+        password_bytes = password.encode('utf-8')
+        if len(password_bytes) > 72:
+            password = password_bytes[:72].decode('utf-8', errors='ignore')
+        
+        # Verify password
+        if not verify_password(password, user.password_hash):
+            raise HTTPException(status_code=401, detail="Invalid username or password")
+        
+        logger.info(f"User '{request.username}' logged in successfully")
         
         # Create access token
         access_token = create_access_token(user.id, user.username)
@@ -335,7 +369,7 @@ async def login(request: LoginRequest, db: Session = Depends(get_db)):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Login error: {str(e)}")
+        logger.error(f"Login error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Login failed: {str(e)}")
 
 

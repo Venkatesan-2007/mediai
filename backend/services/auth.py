@@ -36,15 +36,30 @@ def hash_password(password: str) -> str:
     bcrypt has a 72-byte limit on passwords. If password exceeds this,
     it will be truncated before hashing.
     """
-    # Truncate password to 72 bytes (bcrypt max) and ensure it's a string
-    password_str = str(password).strip()
-    # Get UTF-8 byte length and truncate if needed
-    password_bytes = password_str.encode('utf-8')
-    if len(password_bytes) > 72:
-        # Truncate UTF-8 bytes and decode back to string
-        password_bytes = password_bytes[:72]
+    # Ensure password is a string and strip whitespace
+    if not isinstance(password, str):
+        password = str(password)
+    
+    password_str = password.strip()
+    
+    # Truncate to 72 bytes (bcrypt's maximum)
+    # Important: we must truncate BEFORE passing to bcrypt
+    if len(password_str.encode('utf-8')) > 72:
+        # Truncate UTF-8 bytes safely
+        password_bytes = password_str.encode('utf-8')[:72]
+        # Decode, ignoring any incomplete multibyte characters at the boundary
         password_str = password_bytes.decode('utf-8', errors='ignore')
-    return pwd_context.hash(password_str)
+    
+    # Hash the (possibly truncated) password
+    try:
+        hashed = pwd_context.hash(password_str)
+        return hashed
+    except ValueError as e:
+        # If hashing still fails, truncate more aggressively
+        if 'password_has_invalid_bytes' in str(e) or 'password' in str(e):
+            password_str = password_str[:60]  # Extra safe truncation
+            return pwd_context.hash(password_str)
+        raise
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
