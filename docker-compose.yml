@@ -33,7 +33,7 @@ services:
       - "5000:5000"
     volumes:
       - medi_ai_backend_data:/app/data
-      - ./frontend/medi-ai:/app
+      - ./backend:/app
     depends_on:
       postgres:
         condition: service_healthy

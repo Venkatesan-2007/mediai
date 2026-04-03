@@ -943,7 +943,7 @@ async def generate_prescription(
         # Step 1: Validate and extract text from images using OCR
         print(f"📸 Processing {len(files)} medical image(s)...")
         
-        from ocr import extract_texts_from_uploads
+        from services.ocr_service import extract_texts_from_uploads
         
         # Extract text from images via OCR
         extracted_texts = await extract_texts_from_uploads(files)
