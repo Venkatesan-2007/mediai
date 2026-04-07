@@ -29,11 +29,12 @@ services:
     environment:
       - DATABASE_URL=postgresql://postgres:password@postgres:5432/medi_ai
       - FLASK_ENV=production
+      - PYTHONUNBUFFERED=1
     ports:
       - "5000:5000"
     volumes:
       - medi_ai_backend_data:/app/data
-      - ./backend:/app
+      - ./backend/database:/app/database
     depends_on:
       postgres:
         condition: service_healthy
@@ -62,12 +63,35 @@ services:
       - REACT_APP_API_URL=http://backend:5000
       - REACT_APP_WS_URL=ws://backend:5000
 
+  # Ollama - Secondary LLM Backend (Optional)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: medi_ai_ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - medi-ai-network
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+    restart: unless-stopped
+    # Pull medical-focused model on startup
+    command: ollama serve
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   postgres_data:
     driver: local
   medi_ai_backend_data:
     driver: local
   medi_ai_frontend_data:
+    driver: local
+  ollama_data:
     driver: local
 
 networks:

@@ -37,14 +37,14 @@ const getFormDataHeaders = () => {
 /**
  * Send chat message to backend
  * @param {string} question - User's question
- * @param {string} model - Chat mode ('rag' with documents or 'normal' general knowledge). Default: 'rag'
+ * @param {string} mode - Chat mode ('rag' with documents or 'normal' general knowledge). Default: 'rag'
  * @returns {Promise} Response from API
  */
-export const sendMessage = async (question, model = 'rag') => {
+export const sendMessage = async (question, mode = 'rag') => {
   const response = await fetch(`${API_URL}/api/chat`, {
     method: 'POST',
     headers: getAuthHeaders(),
-    body: JSON.stringify({ question, model }),
+    body: JSON.stringify({ question, mode }),
   });
 
   if (!response.ok) {

@@ -10,6 +10,7 @@ import '../../../shared/styles/Chat.css';
  * AI chat interface with authenticated PDF context
  */
 const Chat = () => {
+  const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
   const { logout } = useAuth();
   const [messages, setMessages] = useState([
     {
@@ -22,7 +23,6 @@ const Chat = () => {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [uploadedPDFs, setUploadedPDFs] = useState([]);
-  const [selectedModel, setSelectedModel] = useState('rag');
   const [chatHistory, setChatHistory] = useState([]);
   const [showHistory, setShowHistory] = useState(false);
   const [currentChatId, setCurrentChatId] = useState(null);
@@ -44,9 +44,9 @@ const Chat = () => {
 
   const loadChatHistory = async () => {
     try {
-      const response = await fetch('http://localhost:8000/api/chat-history', {
+      const response = await fetch(`${API_URL}/api/chat-history`, {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
         },
       });
       if (response.ok) {
@@ -95,9 +95,11 @@ const Chat = () => {
     setLoading(true);
 
     try {
-      const response = await sendMessage(input, selectedModel);
+      const response = await sendMessage(input, 'rag');
+      console.log('Chat response:', response);
+      
       const botMessage = {
-        id: messages.length + 2,
+        id: newMessages.length + 1,
         text: response.answer,
         sender: 'bot',
         sources: response.sources,
@@ -109,8 +111,9 @@ const Chat = () => {
       // Save to backend
       await saveChatMessage(userMessage, botMessage);
     } catch (err) {
+      console.error('Send message error:', err);
       const errorMessage = {
-        id: messages.length + 2,
+        id: newMessages.length + 1,
         text: `Error: ${err.message}`,
         sender: 'bot',
         timestamp: new Date(),
@@ -124,20 +127,19 @@ const Chat = () => {
 
   const saveChatMessage = async (userMessage, botMessage) => {
     try {
-      await fetch('http://localhost:8000/api/chat-feedback', {
+      await fetch(`${API_URL}/api/chat-feedback`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
         },
         body: JSON.stringify({
           user_message: userMessage.text,
           bot_response: botMessage.text,
-          model_used: selectedModel,
+          model_used: 'rag',
           chat_id: currentChatId,
         }),
       });
-      // Reload chat history after saving
       loadChatHistory();
     } catch (err) {
       console.error('Error saving chat message:', err);
@@ -211,18 +213,7 @@ const Chat = () => {
           </div>
 
           <div className="chat-input-area">
-            <div className="model-selector">
-              <label htmlFor="model-select">Chat Mode:</label>
-              <select
-                id="model-select"
-                value={selectedModel}
-                onChange={(e) => setSelectedModel(e.target.value)}
-                disabled={loading}
-              >
-                <option value="rag">RAG Model (With Documents)</option>
-                <option value="normal">Normal Model (General Knowledge)</option>
-              </select>
-            </div>
+
             <div>
               <textarea
                 value={input}

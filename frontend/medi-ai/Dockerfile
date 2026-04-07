@@ -11,9 +11,11 @@ COPY package-lock.json* ./
 # Install dependencies
 RUN npm install
 
-# Copy source code
+# Copy configuration files
 COPY public/ ./public/
 COPY src/ ./src/
+COPY tailwind.config.js ./
+COPY postcss.config.js ./
 
 # Build the application
 RUN npm run build
@@ -33,7 +35,7 @@ COPY --from=builder /app/build ./build
 EXPOSE 3000
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD wget --quiet --tries=1 --spider http://localhost:3000/ || exit 1
 
 # Run the application

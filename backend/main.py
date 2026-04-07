@@ -2,18 +2,26 @@
 Medical PDF RAG Chatbot - FastAPI Backend
 Main application entry point
 """
+import os
+from pathlib import Path
+
+# Load environment variables FIRST, before any other imports
+from dotenv import load_dotenv
+env_path = Path(__file__).parent.parent / ".env"  # Load from project root 
+load_dotenv(env_path, override=True)
+
+# Disable PaddleOCR model connectivity check to speed up startup
+os.environ['PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK'] = 'True'
+
 from fastapi import FastAPI, HTTPException, UploadFile, File, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-import os
-from pathlib import Path
 import json
 import uuid
 import tempfile
 import shutil
 from datetime import datetime
-from dotenv import load_dotenv
 from typing import Optional, List
 from sqlalchemy.orm import Session
 import logging
@@ -31,11 +39,14 @@ from services.simple_embeddings import SimpleEmbeddingsService
 from services.local_llm import LocalLLM
 from services.vector_store import VectorStore
 from services.sambanova_api import SambanovaLLM
+from services.ollama_service import OllamaLLM
 from services.database import init_db, get_db, User, Book, engine, Base
 from services.auth import hash_password, verify_password, create_access_token, verify_access_token
 from services.prescription_service import PrescriptionGenerationService, PrescriptionResponse
 from services.cache import search_cache
-from services.ocr_service import router as ocr_router
+# OCR router will be imported lazily after app initialization
+
+import pdfplumber
 
 # Configure structured logging
 logging.basicConfig(
@@ -43,9 +54,6 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
-# Load environment variables
-load_dotenv()
 
 # Initialize database
 init_db()
@@ -64,7 +72,7 @@ async def lifespan(app: FastAPI):
     logger.info("Medical PDF RAG Chatbot API starting...")
     logger.info("ChromaDB path: database/chroma_db")
     
-    # Initialize SambaNova API as primary
+    # Initialize LLM with fallback chain: SambaNova -> Ollama -> LocalLLM
     api_key = os.getenv("SAMBANOVA_API_KEY")
     api_url = os.getenv("SAMBANOVA_API_URL")
     
@@ -74,24 +82,44 @@ async def lifespan(app: FastAPI):
             logger.info("[OK] SambaNova ALLaM-7B-Instruct-preview initialized as primary LLM")
         except Exception as e:
             logger.warning(f"[WARN] SambaNova initialization failed: {str(e)}")
-            logger.info("Attempting LocalLLM as fallback...")
+            logger.info("Attempting Ollama as secondary fallback...")
             
-            # Try LocalLLM as fallback
+            # Try Ollama as secondary fallback
             try:
-                llm = LocalLLM()
-                logger.info("[OK] LocalLLM initialized as fallback")
-            except Exception as local_e:
-                logger.error(f"[ERROR] LocalLLM also failed: {str(local_e)}")
-                llm = None
+                ollama_base = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
+                ollama_model = os.getenv("OLLAMA_MODEL", "mistral")
+                llm = OllamaLLM(base_url=ollama_base, model=ollama_model)
+                logger.info(f"[OK] Ollama ({ollama_model}) initialized as secondary LLM")
+            except Exception as ollama_e:
+                logger.warning(f"[WARN] Ollama also failed: {str(ollama_e)}")
+                logger.info("Attempting LocalLLM as tertiary fallback...")
+                
+                # Try LocalLLM as tertiary fallback
+                try:
+                    llm = LocalLLM()
+                    logger.info("[OK] LocalLLM initialized as tertiary LLM")
+                except Exception as local_e:
+                    logger.error(f"[ERROR] All LLM backends failed: {str(local_e)}")
+                    llm = None
     else:
         logger.warning("[WARN] SambaNova API credentials not configured")
-        logger.info("Attempting LocalLLM as fallback...")
+        logger.info("Attempting Ollama as primary fallback...")
         try:
-            llm = LocalLLM()
-            logger.info("[OK] LocalLLM initialized as fallback")
+            ollama_base = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
+            ollama_model = os.getenv("OLLAMA_MODEL", "mistral")
+            llm = OllamaLLM(base_url=ollama_base, model=ollama_model)
+            logger.info(f"[OK] Ollama ({ollama_model}) initialized as primary LLM")
         except Exception as e:
-            logger.error(f"[ERROR] LocalLLM initialization failed: {str(e)}")
-            llm = None
+            logger.warning(f"[WARN] Ollama initialization failed: {str(e)}")
+            logger.info("Attempting LocalLLM as secondary fallback...")
+            
+            # Try LocalLLM as secondary fallback
+            try:
+                llm = LocalLLM()
+                logger.info("[OK] LocalLLM initialized as secondary LLM")
+            except Exception as local_e:
+                logger.error(f"[ERROR] All LLM backends failed: {str(local_e)}")
+                llm = None
     
     # ChromaDB automatically loads from persistent storage
     try:
@@ -131,8 +159,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include OCR router
-app.include_router(ocr_router, prefix="/ai")
+# Include OCR router (lazily loaded to avoid blocking startup)
+try:
+    from services.ocr_service import router as ocr_router
+    app.include_router(ocr_router, prefix="/ai")
+    logger.info("[OK] OCR service router initialized")
+except Exception as e:
+    logger.warning(f"[WARN] OCR service failed to initialize: {str(e)}")
+    logger.info("      OCR endpoints will not be available")
 
 # Global state
 vector_store = VectorStore(index_path="database/faiss_index.pkl")
@@ -247,6 +281,7 @@ class LoadPDFRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     question: str
+    mode: str = "rag"  # "normal" (ChatGPT-like) or "rag" (document-based)
 
 class ChatResponse(BaseModel):
     answer: str
@@ -256,6 +291,14 @@ class StatusResponse(BaseModel):
     is_loaded: bool
     num_chunks: int
     message: str
+
+class LLMDiagnosticsResponse(BaseModel):
+    llm_type: str
+    is_available: bool
+    status: str
+    model: Optional[str] = None
+    base_url: Optional[str] = None
+    error_details: Optional[str] = None
 
 class UserStatsResponse(BaseModel):
     """User statistics for dashboard."""
@@ -409,6 +452,82 @@ async def get_status():
         num_chunks=num_chunks,
         message="Ready for queries" if is_loaded else "No PDFs loaded. Upload PDFs first."
     )
+
+@app.get("/api/llm-diagnostics", response_model=LLMDiagnosticsResponse)
+async def get_llm_diagnostics():
+    """Check LLM service status and availability"""
+    if not llm:
+        return LLMDiagnosticsResponse(
+            llm_type="None",
+            is_available=False,
+            status="LLM service failed to initialize",
+            error_details="Check backend logs for details"
+        )
+    
+    llm_type = llm.__class__.__name__
+    
+    if llm_type == "OllamaLLM":
+        try:
+            # Check Ollama connection
+            import requests
+            ollama_base = llm.base_url
+            response = requests.get(f"{ollama_base}/api/tags", timeout=3)
+            
+            if response.status_code == 200:
+                models = response.json().get("models", [])
+                model_names = [m.get("name", "").split(":")[0] for m in models]
+                
+                if llm.model in model_names:
+                    return LLMDiagnosticsResponse(
+                        llm_type="Ollama",
+                        is_available=True,
+                        status="✓ Ready",
+                        model=llm.model,
+                        base_url=ollama_base
+                    )
+                else:
+                    available = ", ".join(set(model_names)) if model_names else "None"
+                    return LLMDiagnosticsResponse(
+                        llm_type="Ollama",
+                        is_available=False,
+                        status="✗ Model not found",
+                        model=llm.model,
+                        base_url=ollama_base,
+                        error_details=f"Model '{llm.model}' not available. Available models: {available}"
+                    )
+            else:
+                return LLMDiagnosticsResponse(
+                    llm_type="Ollama",
+                    is_available=False,
+                    status="✗ Connection error",
+                    model=llm.model,
+                    base_url=ollama_base,
+                    error_details=f"HTTP {response.status_code}: {response.text[:100]}"
+                )
+        except requests.exceptions.ConnectionError:
+            return LLMDiagnosticsResponse(
+                llm_type="Ollama",
+                is_available=False,
+                status="✗ Connection failed",
+                model=llm.model,
+                base_url=llm.base_url,
+                error_details=f"Cannot reach Ollama at {llm.base_url}. Is Ollama running?"
+            )
+        except Exception as e:
+            return LLMDiagnosticsResponse(
+                llm_type="Ollama",
+                is_available=False,
+                status="✗ Diagnostics error",
+                error_details=str(e)
+            )
+    else:
+        # Other LLM types (LocalLLM, SambaNova)
+        return LLMDiagnosticsResponse(
+            llm_type=llm_type,
+            is_available=True,
+            status="✓ Initialized",
+            error_details=None
+        )
 
 @app.get("/api/cache-stats")
 async def get_cache_stats(current_user: User = Depends(get_current_user)):
@@ -582,89 +701,163 @@ async def upload_pdf(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Upload a PDF file and add to knowledge base (requires authentication).
-    Rate limit: 5 uploads per minute per IP address."""
+    """Upload a PDF file and add to knowledge base (requires authentication)."""
     global is_loaded
     
     temp_path = None
     try:
+        # Validate file
+        if not file.filename.lower().endswith('.pdf'):
+            raise ValueError("Only PDF files are supported")
+        
         pdf_id = str(uuid.uuid4())[:8]
         
-        # Save temporarily
-        suffix = ".pdf"
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-        temp_path = temp_file.name
-        temp_file.close()
+        # Save temporarily with correct name
+        temp_dir = tempfile.gettempdir()
+        temp_path = os.path.join(temp_dir, f"{pdf_id}_{file.filename}")
         
+        # Read and save PDF content
         pdf_content = await file.read()
         with open(temp_path, "wb") as f:
             f.write(pdf_content)
         
-        logger.info(f"Processing PDF: {file.filename} for user {current_user.username}")
+        logger.info(f"[UPLOAD] Processing PDF: {file.filename} ({len(pdf_content)} bytes)")
         
-        # Load PDF
-        loader = PDFLoader(os.path.dirname(temp_path))
-        documents = loader.load_pdfs()
+        # Extract text directly using pdfplumber (faster than PDFLoader)
+        logger.info("[UPLOAD] Extracting PDF text...")
+        text = ""
+        try:
+            with pdfplumber.open(temp_path) as pdf:
+                for page_num, page in enumerate(pdf.pages, 1):
+                    page_text = page.extract_text()
+                    if page_text:
+                        text += page_text + "\n"
+                    logger.debug(f"[UPLOAD] Page {page_num}: {len(page_text) if page_text else 0} chars")
+        except Exception as e:
+            logger.error(f"[UPLOAD] PDF extraction failed: {str(e)}")
+            raise ValueError(f"Failed to extract text from PDF: {str(e)}")
         
-        if not documents:
-            raise ValueError("No content extracted from PDF")
+        if not text or len(text.strip()) < 10:
+            raise ValueError("PDF has no readable text content")
+        
+        # Create document
+        documents = [{
+            "filename": file.filename,
+            "text": text.strip(),
+            "source": f"pdf:{pdf_id}:{file.filename}"
+        }]
+        
+        logger.info(f"[UPLOAD] Extracted {len(text)} characters from PDF")
         
         # Chunk text
-        logger.info("[1/3] Chunking text...")
+        logger.info("[UPLOAD] Chunking text...")
         chunker = TextChunker(chunk_size=400, overlap=50)
         chunks = chunker.chunk_documents(documents)
         
         if not chunks:
-            raise ValueError("Failed to chunk document")
+            raise ValueError("Failed to chunk document (no chunks created)")
+        
+        logger.info(f"[UPLOAD] Created {len(chunks)} chunks")
         
         # Create embeddings
-        logger.info("[2/3] Creating embeddings...")
+        logger.info("[UPLOAD] Creating embeddings...")
         local_embeddings = None
         try:
             local_embeddings = SimpleEmbeddingsService()
-        except ImportError as e:
-            logger.warning(f"Embeddings unavailable ({str(e)}), using placeholder embeddings...")
+            logger.info("[UPLOAD] Using TF-IDF embeddings")
+        except Exception as e:
+            logger.warning(f"[UPLOAD] Embeddings service unavailable: {str(e)}, using placeholder")
         
         embedded_chunks = []
-        for chunk in chunks:
-            if local_embeddings:
-                embedding = local_embeddings.embed_text(chunk["text"])
-            else:
-                # Use placeholder embedding (all zeros) when embeddings unavailable
-                embedding = [0.0] * 384  # MiniLM embedding dimension
-            
-            chunk["embedding"] = embedding
-            chunk["source"] = f"pdf:{pdf_id}:{file.filename}"
-            chunk["pdf_id"] = pdf_id
-            chunk["user_id"] = current_user.id
-            chunk["id"] = f"{pdf_id}_{chunk.get('chunk_id', 0)}"
-            embedded_chunks.append(chunk)
+        
+        # If we have embeddings service, fit it on all chunks first
+        if local_embeddings:
+            logger.info("[UPLOAD] Fitting TF-IDF vectorizer on all chunks...")
+            try:
+                texts = [chunk["text"] for chunk in chunks]
+                local_embeddings.vectorizer.fit(texts)
+                
+                # Save vectorizer for future use
+                Path("database").mkdir(parents=True, exist_ok=True)
+                with open(local_embeddings.vocab_path, 'wb') as f:
+                    import pickle as pkl
+                    pkl.dump(local_embeddings.vectorizer, f)
+                logger.info("[UPLOAD] ✓ Vectorizer fitted and saved")
+            except Exception as e:
+                logger.error(f"[UPLOAD] Error fitting vectorizer: {str(e)}")
+                raise
+        
+        for i, chunk in enumerate(chunks):
+            try:
+                if local_embeddings:
+                    embedding = local_embeddings.embed_text(chunk["text"])
+                else:
+                    # Placeholder embedding
+                    embedding = [0.0] * 384
+                
+                chunk["embedding"] = embedding
+                chunk["source"] = f"pdf:{pdf_id}:{file.filename}"
+                chunk["pdf_id"] = pdf_id
+                chunk["user_id"] = current_user.id
+                chunk["id"] = f"{pdf_id}_{i}"
+                chunk["filename"] = file.filename
+                embedded_chunks.append(chunk)
+            except Exception as e:
+                logger.error(f"[UPLOAD] Error processing chunk {i}: {str(e)}")
+                raise
+        
+        logger.info(f"[UPLOAD] Processed {len(embedded_chunks)} embedded chunks")
         
         # Save PDF to database
-        logger.info("[3/3] Saving to database...")
-        book = Book(
-            user_id=current_user.id,
-            filename=file.filename,
-            pdf_content=pdf_content
-        )
-        db.add(book)
-        db.commit()
+        logger.info("[UPLOAD] Saving to database...")
+        try:
+            book = Book(
+                user_id=current_user.id,
+                filename=file.filename,
+                pdf_content=pdf_content
+            )
+            db.add(book)
+            db.commit()
+            db.refresh(book)
+            logger.info(f"[UPLOAD] Book saved with ID: {book.id}")
+        except Exception as e:
+            db.rollback()
+            logger.error(f"[UPLOAD] Database save error: {str(e)}")
+            raise
         
-        # Add chunks to ChromaDB
-        for chunk in embedded_chunks:
-            chunk['user_id'] = current_user.id
-        vector_store.add_chunks(embedded_chunks)
+        # Add chunks to vector store
+        logger.info("[UPLOAD] Adding chunks to vector store...")
+        try:
+            vector_store.add_chunks(embedded_chunks)
+            logger.info(f"[UPLOAD] Vector store updated")
+        except Exception as e:
+            logger.error(f"[UPLOAD] Vector store error: {str(e)}")
+            raise
+        
+        # IMPORTANT: Reload embeddings service to pick up the newly fitted vectorizer
+        global embeddings_service
+        try:
+            logger.info("[UPLOAD] Reloading embeddings service with newly fitted vectorizer...")
+            embeddings_service = SimpleEmbeddingsService()  # This will load the saved vectorizer
+            logger.info("[UPLOAD] ✓ Embeddings service reloaded")
+        except Exception as e:
+            logger.warning(f"[UPLOAD] Warning: Could not reload embeddings service: {str(e)}")
+            # Don't fail - continue with the old instance
+        
         is_loaded = True
         
-        # Invalidate cache for this user (new PDF added)
+        # Invalidate cache
         search_cache.invalidate_user(current_user.id)
-        logger.info(f"Cache invalidated for user {current_user.id} after PDF upload")
         
         # Clean up temp file
         if temp_path and os.path.exists(temp_path):
-            os.remove(temp_path)
+            try:
+                os.remove(temp_path)
+                logger.info("[UPLOAD] Temp file cleaned up")
+            except:
+                pass
         
-        logger.info(f"PDF processed: {len(embedded_chunks)} chunks created for user {current_user.id}")
+        logger.info(f"[UPLOAD] ✓ SUCCESS - PDF uploaded with {len(embedded_chunks)} chunks")
         
         return {
             "status": "success",
@@ -676,10 +869,16 @@ async def upload_pdf(
         }
     
     except Exception as e:
-        db.rollback()
-        logger.error(f"PDF upload error for user {current_user.id}: {str(e)}", exc_info=True)
+        logger.error(f"[UPLOAD] ✗ ERROR: {str(e)}", exc_info=True)
+        try:
+            db.rollback()
+        except:
+            pass
         if temp_path and os.path.exists(temp_path):
-            os.remove(temp_path)
+            try:
+                os.remove(temp_path)
+            except:
+                pass
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 
@@ -726,10 +925,7 @@ async def chat(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Answer a question based on loaded PDFs using RAG (requires authentication).
-    Only searches documents uploaded by the current user.
-    Falls back to general knowledge if no PDFs are loaded.
-    Rate limit: 10 requests per minute per IP address.
+    Answer questions based on loaded PDF documents using RAG mode
     """
     try:
         start_time = datetime.now()
@@ -739,100 +935,109 @@ async def chat(
             raise HTTPException(status_code=500, detail="LLM not initialized")
         
         question = chat_request.question.strip()
+        # Default to RAG mode (only mode now)
+        mode = "rag"
         
         if not question:
             logger.warning(f"Empty question from user {current_user.username}")
             raise HTTPException(status_code=400, detail="Question cannot be empty")
         
-        logger.info(f"Chat request from {current_user.username}: {question[:100]}...")
+        logger.info(f"\n{'='*60}")
+        logger.info(f"[RAG MODE] Chat request from {current_user.username}")
+        logger.info(f"Question: {question[:100]}")
+        logger.info(f"{'='*60}\n")
         
-        # Check cache first
-        cached_result = search_cache.get(question, current_user.id)
-        if cached_result:
-            logger.info(f"Cache hit for user {current_user.id}, question: {question[:50]}...")
-            return ChatResponse(
-                answer=cached_result['answer'],
-                sources=cached_result['sources']
-            )
+        # Create cache key
+        cache_key = f"rag:{question}"
         
-        # If no PDFs are loaded, use fallback general response
+        # ==================== RAG MODE ====================
+        # Document-based response
+        logger.info(f"[RAG MODE] Searching documents...")
+        
+        # If no PDFs loaded, tell user to upload
         if not is_loaded:
-            logger.info("No PDFs loaded, using general knowledge response")
-            try:
-                response = llm.generate_response(
-                    question=question,
-                    relevant_chunks=[],
-                    max_tokens=128,
-                    temperature=0.3
-                )
-            except Exception as e:
-                logger.error(f"Error generating general knowledge response: {str(e)}")
-                if "rate_limit" in str(e).lower() or "429" in str(e):
-                    response = f"I can help with medical questions, but I'm currently rate-limited. Please try again in a moment. Your question: {question[:100]}..."
-                else:
-                    response = "I'm ready to help! Please upload medical PDFs to get started, and I can answer questions about them."
-            
+            logger.info("[RAG MODE] No PDFs loaded")
             return ChatResponse(
-                answer=response,
+                answer="Please upload medical PDFs to use RAG mode. Go to Book List section to upload documents.",
                 sources=[]
             )
         
-        
-        # Step 1: Search for relevant chunks from FAISS using semantic search
-        logger.info("Searching knowledge base...")
-        
+        # Search for relevant chunks
         try:
-            # Embed the question
             if not embeddings_service:
                 logger.error("Embeddings service not available")
                 raise HTTPException(status_code=500, detail="Embeddings service not initialized")
             
+            logger.info(f"[RAG MODE] Creating question embedding...")
             question_embedding = embeddings_service.embed_text(question)
+            logger.info(f"[RAG MODE] Question embedding shape: {len(question_embedding)}")
+            logger.info(f"[RAG MODE] Question embedding (first 10): {question_embedding[:10]}")
             
-            # Filter chunks: include user's own uploads + public chunks (user_id=0)
+            # Get all chunks for this user
             all_chunks = vector_store.get_all_chunks()
-            user_chunks = [chunk for chunk in all_chunks if chunk.get("user_id") == current_user.id or chunk.get("user_id") == 0]
+            logger.info(f"[RAG MODE] Total chunks in vector store: {len(all_chunks)}")
             
-            logger.info(f"Found {len(user_chunks)} accessible chunks for user {current_user.id} (personal: {len([c for c in user_chunks if c.get('user_id') == current_user.id])}, public: {len([c for c in user_chunks if c.get('user_id') == 0])})")
+            # Show sample chunk to debug user_id issue
+            if all_chunks:
+                sample_chunk = all_chunks[0]
+                logger.info(f"[RAG MODE] Sample chunk user_id: {sample_chunk.get('user_id', 'NOT SET')}")
             
-            # Search in user's chunks + public chunks for user isolation + shared access
+            # Filter chunks for this user - treat chunks with no user_id as shared
+            user_chunks = []
+            for chunk in all_chunks:
+                chunk_user_id = chunk.get("user_id")
+                # Include chunk if:
+                # 1. It belongs to the current user
+                # 2. It has user_id=0 (shared across all users)
+                # 3. It has no user_id set (backward compatibility - treat as shared)
+                if chunk_user_id == current_user.id or chunk_user_id == 0 or chunk_user_id is None:
+                    user_chunks.append(chunk)
+            
+            logger.info(f"[RAG MODE] User chunks (user_id={current_user.id}): {len(user_chunks)}")
+            
+            # Show chunk details
             if user_chunks:
-                relevant_chunks = vector_store.search_in_chunks(
-                    query_embedding=question_embedding,
-                    filtered_chunks=user_chunks,
-                    k=5
-                )
-            else:
-                # This user has no PDFs uploaded
+                sample_chunk = user_chunks[0]
+                logger.info(f"[RAG MODE] Sample chunk keys: {sample_chunk.keys()}")
+                logger.info(f"[RAG MODE] Sample chunk has embedding: {'embedding' in sample_chunk}")
+                if "embedding" in sample_chunk:
+                    logger.info(f"[RAG MODE] Sample embedding shape: {len(sample_chunk['embedding'])}")
+                logger.info(f"[RAG MODE] Sample chunk text (first 100 chars): {sample_chunk.get('text', '')[:100]}")
+            
+            if not user_chunks:
                 return ChatResponse(
-                    answer="You haven't uploaded any PDFs yet. Please upload medical documents to get started. Go to the Book List section to upload PDFs.",
+                    answer="You haven't uploaded any PDFs yet. Please upload medical documents to get started.",
                     sources=[]
                 )
             
-            if relevant_chunks:
-                logger.info(f"Vector search found {len(relevant_chunks)} relevant chunks for user")
-            else:
-                logger.warning(f"No relevant documents found for user's query")
-                    
+            # Search
+            logger.info(f"[RAG MODE] Searching for similar chunks...")
+            relevant_chunks = vector_store.search_in_chunks(
+                query_embedding=question_embedding,
+                filtered_chunks=user_chunks,
+                k=5
+            )
+            logger.info(f"[RAG MODE] Found {len(relevant_chunks)} relevant chunks")
+            
+            # Log search results
+            for i, chunk in enumerate(relevant_chunks):
+                logger.info(f"[RAG MODE]   Chunk {i+1}: distance={chunk.get('distance', 'N/A')}, text_len={len(chunk.get('text', ''))}")
+            
         except Exception as e:
-            logger.error(f"Search error: {str(e)}")
+            logger.error(f"[RAG MODE] Search error: {str(e)}", exc_info=True)
             relevant_chunks = []
         
         if not relevant_chunks:
             return ChatResponse(
-                answer="No relevant information found in your uploaded documents. Try asking a different question or upload more medical documents.",
+                answer="No relevant information found in your documents. Try a different question.",
                 sources=[]
             )
         
-        logger.info(f"Processing {len(relevant_chunks)} relevant chunks")
-        
-        # Step 2: Extract text from chunk dictionaries
-        # IMPORTANT: generate_response expects List[str], not List[dict]
+        # Extract chunk texts
         chunk_texts = []
         for chunk in relevant_chunks:
-            # Handle both dict and string formats
             if isinstance(chunk, dict):
-                text = chunk.get("text", str(chunk))
+                text = chunk.get("text", "")
             else:
                 text = str(chunk)
             
@@ -841,74 +1046,66 @@ async def chat(
         
         if not chunk_texts:
             return ChatResponse(
-                answer="No readable content found in relevant documents. Please try a different question.",
+                answer="No readable content in relevant documents.",
                 sources=[]
             )
         
-        # Step 3: Generate concise summarized response
-        logger.info("Generating summarized response from LLM...")
+        # Generate response from documents
+        logger.info(f"[RAG MODE] Generating response from documents")
         try:
             response = llm.generate_response(
                 question=question,
-                relevant_chunks=chunk_texts,
-                max_tokens=128,
-                temperature=0.3
+                relevant_chunks=chunk_texts[:3],  # LIMIT TO 3 CHUNKS
+                max_tokens=256,                    # REDUCED for speed
+                temperature=0.3                    # LOW temp for accuracy
             )
-        except Exception as e:
-            error_str = str(e)
-            logger.error(f"LLM error: {error_str}")
+            logger.info(f"[RAG MODE] Response generated successfully")
             
-            # If tokenization error or API 400 error, use local fallback
-            if "tokenize" in error_str.lower() or "400" in error_str:
-                logger.warning("Tokenization error detected, using local fallback response...")
-                if hasattr(llm, '_local_fallback_response'):
-                    response = llm._local_fallback_response(chunk_texts, question)
-                else:
-                    response = f"Based on your question about '{question}', here is relevant information from the documents: {' '.join(chunk_texts[:2])[:200]}..."
-            # If token limit error, summarize context first and retry
-            elif "maximum context length" in error_str or "context length" in error_str:
-                logger.warning("Context too long, attempting summary...")
-                try:
-                    summarized_context = [llm.summarize_context(chunk_texts, question)]
-                    response = llm.generate_response(
-                        question=question,
-                        relevant_chunks=summarized_context,
-                        max_tokens=128,
-                        temperature=0.3
+            # Check if response contains error indicators including memory errors
+            if any(error_marker in response for error_marker in [
+                "Error generating response from Ollama",
+                "Cannot connect to Ollama",
+                "Ollama service is not running",
+                "requires more memory",
+                "insufficient system RAM"
+            ]):
+                logger.error(f"[RAG MODE] LLM error: {response}")
+                # Return user-friendly error message
+                if "memory" in response.lower() or "ram" in response.lower():
+                    raise HTTPException(
+                        status_code=503,
+                        detail="The AI model requires more system memory to run. "
+                               "This typically happens with smaller servers. "
+                               "Try: 1) Close other applications, 2) Restart Ollama, "
+                               "3) Use a smaller model like `neural-chat` or `orca-mini`"
                     )
-                except Exception as retry_e:
-                    logger.error(f"Summary generation failed: {str(retry_e)}")
-                    # If summarization also fails, use fallback
-                    if hasattr(llm, '_local_fallback_response'):
-                        response = llm._local_fallback_response(chunk_texts, question)
-                    else:
-                        raise
-            # If rate limit, try local fallback
-            elif "rate_limit" in error_str.lower() or "429" in error_str:
-                logger.warning("API rate limited, using local fallback")
-                if hasattr(llm, '_local_fallback_response'):
-                    response = llm._local_fallback_response(chunk_texts, question)
                 else:
-                    raise HTTPException(status_code=429, detail="LLM service rate limited. Please try again later.")
-            else:
-                raise HTTPException(status_code=500, detail=f"Error generating response: {str(e)}")
-        
-        # Extract source documents
-        sources = list(set([chunk.get("source", "unknown") for chunk in relevant_chunks]))
-        
-        # Cache the result
-        search_cache.set(question, current_user.id, {'answer': response, 'sources': sources})
-        
-        elapsed_time = (datetime.now() - start_time).total_seconds()
-        logger.info(f"Chat request completed in {elapsed_time:.2f}s for user {current_user.id}")
-        
-        return ChatResponse(
-            answer=response,
-            sources=sources
-        )
+                    raise HTTPException(
+                        status_code=503,
+                        detail="LLM service is not available. " + response
+                    )
+            
+            # Get sources
+            sources = list(set([chunk.get("source", "unknown") for chunk in relevant_chunks]))
+            
+            # Cache result
+            cache_key = f"{mode}:{question}"
+            search_cache.set(cache_key, current_user.id, {'answer': response, 'sources': sources})
+            
+            elapsed_time = (datetime.now() - start_time).total_seconds()
+            logger.info(f"[RAG MODE] Completed in {elapsed_time:.2f}s")
+            
+            return ChatResponse(
+                answer=response,
+                sources=sources
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"[RAG MODE] LLM error: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error generating response: {str(e)}")
     
     except HTTPException:
-        # Re-raise HTTP exceptions as-is
         raise
     except Exception as e:
         logger.error(f"Unexpected error in chat endpoint: {str(e)}", exc_info=True)
