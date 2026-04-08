@@ -20,8 +20,32 @@ services:
       - medi-ai-network
     restart: unless-stopped
 
+  # Backend API (Python) - Ollama runs separately on host
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: medi_ai_backend
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/medi_ai
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - OLLAMA_MODEL=mistral
+      - PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "8000:8000"
+    volumes:
+      - medi_ai_backend_data:/app/data
+      - ./backend/database:/app/database
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - medi-ai-network
+    restart: unless-stopped
+    command: python main.py
+
   # Frontend (React)
-  # NOTE: Backend runs manually - see README
   frontend:
     build:
       context: ./frontend/medi-ai
@@ -32,15 +56,19 @@ services:
     volumes:
       - medi_ai_frontend_data:/app
       - ./frontend/medi-ai/src:/app/src
+    depends_on:
+      - backend
     networks:
       - medi-ai-network
     restart: unless-stopped
     environment:
-      - REACT_APP_API_URL=http://localhost:8000
-      - REACT_APP_WS_URL=ws://localhost:8000
+      - REACT_APP_API_URL=http://backend:8000
+      - REACT_APP_WS_URL=ws://backend:8000
 
 volumes:
   postgres_data:
+    driver: local
+  medi_ai_backend_data:
     driver: local
   medi_ai_frontend_data:
     driver: local
