@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   # PostgreSQL Database
   postgres:
@@ -21,7 +23,6 @@ services:
     restart: unless-stopped
 
   # Frontend (React)
-  # NOTE: Backend runs manually - see README
   frontend:
     build:
       context: ./frontend/medi-ai
@@ -30,8 +31,10 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - medi_ai_frontend_data:/app
       - ./frontend/medi-ai/src:/app/src
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
       - medi-ai-network
     restart: unless-stopped
@@ -41,8 +44,6 @@ services:
 
 volumes:
   postgres_data:
-    driver: local
-  medi_ai_frontend_data:
     driver: local
 
 networks:
