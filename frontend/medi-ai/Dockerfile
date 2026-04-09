@@ -9,9 +9,9 @@ COPY package.json ./
 COPY package-lock.json* ./
 
 # Install dependencies
-RUN npm install
+RUN npm ci --prefer-offline --no-audit
 
-# Copy configuration files
+# Copy configuration files and source
 COPY public/ ./public/
 COPY src/ ./src/
 COPY tailwind.config.js ./
