@@ -1,28 +1,48 @@
+# FastAPI and Web Framework
 fastapi==0.104.1
 uvicorn==0.24.0
 python-multipart==0.0.6
-pdfplumber==0.10.3
-faiss-cpu>=1.8.0
+slowapi==0.1.8
+httpx==0.25.0
+
+# Data Processing
 numpy<2
-requests==2.31.0
-python-dotenv==1.0.0
-pydantic==2.5.0
-cors==1.0.1
-sambanova>=1.4.0
+scipy>=1.10.0
+pandas>=2.0.0
+
+# PDF Processing
+pdfplumber==0.10.3
+
+# Vector Database and Embeddings
+faiss-cpu>=1.8.0
+chromadb==0.4.14
 sentence-transformers
+
+# LLM and AI Services
+sambanova>=1.4.0
+ollama>=0.1.0
+
+# OCR and Image Processing
 paddleocr>=2.7.0.3
 paddlepaddle>=2.5.0
 pytesseract>=0.3.10
 pillow>=10.0.0
 opencv-python>=4.5.0
-scipy>=1.10.0
-chromadb==0.4.14
-slowapi==0.1.8
-httpx==0.25.0
+
+# Database
 sqlalchemy==2.0.23
 psycopg2-binary==2.9.9
+
+# Authentication and Security
 bcrypt==4.0.1
 python-jose[cryptography]==3.3.0
-matplotlib>=3.7.0
+
+# Configuration and Utilities
+python-dotenv==1.0.0
+pydantic==2.5.0
+requests==2.31.0
 urllib3>=2.0.0,<3.0.0
 charset-normalizer>=3.0.0
+
+# Visualization
+matplotlib>=3.7.0

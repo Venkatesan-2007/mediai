@@ -53,7 +53,7 @@ if errorlevel 1 (
 )
 
 echo [4/6] Installing backend dependencies...
-pip install -q -r backend/requirements.txt
+pip install -r backend/requirements.txt
 if errorlevel 1 (
     echo [ERROR] Failed to install backend dependencies
     pause
@@ -62,7 +62,7 @@ if errorlevel 1 (
 
 echo [5/6] Installing frontend dependencies...
 cd frontend\medi-ai
-call npm install --silent
+call npm install
 if errorlevel 1 (
     echo [ERROR] Failed to install frontend dependencies
     cd ..\..
@@ -70,6 +70,7 @@ if errorlevel 1 (
     exit /b 1
 )
 cd ..\..
+
 
 echo [6/6] Starting services...
 echo.
@@ -84,7 +85,7 @@ echo Press any key in backend terminal to stop the server
 echo.
 
 REM Start backend in new terminal
-start cmd /k "cd /d "%cd%\backend" && call ..\\.venv\Scripts\activate.bat && echo. && echo Starting FastAPI Backend... && echo. && uvicorn main:app --reload --host 0.0.0.0 --port 8000"
+start cmd /k "call .venv\Scripts\activate.bat && cd /d "%cd%\backend" && echo. && echo Starting FastAPI Backend... && echo. && uvicorn main:app --reload --host 0.0.0.0 --port 8000"
 
 REM Wait a moment for backend to start
 timeout /t 3 /nobreak
