@@ -55,7 +55,7 @@ class SambanovaLLM:
         """
         try:
             response = self.client.chat.completions.create(
-                model="ALLaM-7B-Instruct-preview",
+                model="Meta-Llama-3.3-70B-Instruct",
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=temperature,

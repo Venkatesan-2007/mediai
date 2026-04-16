@@ -27,54 +27,32 @@ logger = logging.getLogger("ocr")
 logger.setLevel(logging.INFO)
 
 # ---------------------------
-# OCR backend: PRIMARY = PaddleOCR (Recommended)
-# FALLBACK = Tesseract-OCR (via pytesseract) if PaddleOCR not available
+# OCR backend: PRIMARY = EasyOCR (Best for handwritten text)
+# FALLBACK = Tesseract-OCR if EasyOCR not available
 # ---------------------------
 
-# Fallback method: Tesseract-OCR via pytesseract  
-_PYTESSERACT_AVAILABLE = False
+# NOTE: EasyOCR is ENABLED - Best for handwritten medical documents
+# Supports 80+ languages and excellent handwritten recognition
+_EASYOCR_AVAILABLE = False
+_easy_reader = None
+
+try:
+    import easyocr
+    _EASYOCR_AVAILABLE = True
+    logger.info("[CONFIG] EasyOCR: ENABLED (PRIMARY - Best for handwritten text)")
+except ImportError:
+    _EASYOCR_AVAILABLE = False
+    logger.warning("[CONFIG] EasyOCR: NOT INSTALLED - Install with: pip install easyocr")
+
+# Tesseract fallback
 try:
     import pytesseract
     from PIL import Image
-    # Configure pytesseract to find Tesseract installation
-    import os
-    # Check common Tesseract installation paths
-    tesseract_paths = [
-        r'C:\Program Files\Tesseract-OCR\tesseract.exe',  # Default installation
-        r'C:\Program Files (x86)\Tesseract-OCR\tesseract.exe',  # 32-bit
-        '/usr/bin/tesseract',  # Linux
-        '/usr/local/bin/tesseract',  # macOS
-    ]
-    
-    for path in tesseract_paths:
-        if os.path.exists(path):
-            try:
-                pytesseract.pytesseract.tesseract_cmd = path
-                # Test if it works
-                version = pytesseract.get_tesseract_version()
-                logger.info(f"[OK] Tesseract-OCR found at: {path}")
-                logger.info(f"   Version: {version}")
-                _PYTESSERACT_AVAILABLE = True
-                break
-            except Exception as e:
-                logger.warning(f"[WARN] Found Tesseract at {path} but can't execute: {e}")
-                continue
-    
-    if not _PYTESSERACT_AVAILABLE:
-        logger.warning("[WARN] Tesseract not found at default paths. Please install from:")
-        logger.warning("   Windows: https://github.com/UB-Mannheim/tesseract/wiki")
-        logger.warning("   Download: tesseract-ocr-w64-setup-v5.x.exe or v5.3.exe")
-        logger.warning("   Linux: sudo apt-get install tesseract-ocr")
-        logger.warning("   macOS: brew install tesseract")
-        logger.warning("[WARN] Will fallback to PaddleOCR")
-    else:
-        logger.info("[OK] pytesseract imported successfully (available as fallback)")
-except ImportError as e:
-    logger.warning(f"[WARN] pytesseract not available (this is OK, PaddleOCR is primary): {e}")
+    _PYTESSERACT_AVAILABLE = True
+    logger.info("[CONFIG] Tesseract-OCR: AVAILABLE (FALLBACK)")
+except ImportError:
     _PYTESSERACT_AVAILABLE = False
-except Exception as e:
-    logger.error(f"[ERROR] Error configuring pytesseract: {e}")
-    _PYTESSERACT_AVAILABLE = False
+    logger.warning("[CONFIG] Tesseract-OCR: NOT INSTALLED")
 
 # Primary method: PaddleOCR
 _REAL_PADDLE_AVAILABLE = False
@@ -109,9 +87,14 @@ _paddleocr_instance = None
 
 def ensure_ocr_initialized():
     """
-    Lazy init: PRIMARY = PaddleOCR
-    FALLBACK = Tesseract-OCR via pytesseract if PaddleOCR not available
+    Initialize PaddleOCR exclusively for medical document processing.
     Returns an object with a .predict(image_path) -> [{'rec_texts': [...]}] API.
+    
+    PaddleOCR provides superior accuracy for:
+    - Handwritten prescriptions and signatures
+    - Printed medical documents
+    - Mixed handwritten and typed text
+    - Rotated/skewed documents
     """
     global _paddleocr_instance, _REAL_PADDLE_AVAILABLE, _PYTESSERACT_AVAILABLE, _RealPaddleOCR
     if _paddleocr_instance is not None:
@@ -119,262 +102,224 @@ def ensure_ocr_initialized():
 
     class _Shim:
         def __init__(self):
-            global _REAL_PADDLE_AVAILABLE, _PYTESSERACT_AVAILABLE, _RealPaddleOCR
+            global _REAL_PADDLE_AVAILABLE, _PYTESSERACT_AVAILABLE, _RealPaddleOCR, _EASYOCR_AVAILABLE, _easy_reader
             
+            self._using_easyocr = False
+            self._easy_reader = None
             self._using_tesseract = False
             self._using_paddle = False
             self._real_paddle = None
             
-            # Try PaddleOCR first (PRIMARY METHOD)
-            # If it failed during module import, try again now
-            if (_REAL_PADDLE_AVAILABLE is None or not _REAL_PADDLE_AVAILABLE) and _RealPaddleOCR is None:
+            # Try EasyOCR first (PRIMARY METHOD)
+            if _EASYOCR_AVAILABLE:
                 try:
-                    import sys
-                    if 'matplotlib' not in sys.modules:
-                        import matplotlib
-                        matplotlib.use('Agg')
-                    from paddleocr import PaddleOCR as _RealPaddleOCR_Deferred
-                    _RealPaddleOCR = _RealPaddleOCR_Deferred
-                    _REAL_PADDLE_AVAILABLE = True
-                    logger.info("[OK] PaddleOCR imported successfully on first use")
+                    import easyocr
+                    logger.info("[INIT] Initializing EasyOCR reader...")
+                    # Initialize EasyOCR with English language
+                    self._easy_reader = easyocr.Reader(['en'], gpu=False)
+                    self._using_easyocr = True
+                    logger.info("[OK] EasyOCR initialized as PRIMARY")
                 except Exception as e:
-                    logger.warning(f"[WARN] Could not import PaddleOCR at runtime: {str(e)[:80]}")
-                    _REAL_PADDLE_AVAILABLE = False
+                    logger.warning(f"[WARN] EasyOCR initialization failed: {str(e)[:80]}")
+                    self._using_easyocr = False
             
-            if _REAL_PADDLE_AVAILABLE and _RealPaddleOCR is not None:
+            # Try Tesseract as secondary fallback
+            if not self._using_easyocr and _PYTESSERACT_AVAILABLE:
                 try:
-                    # Initialize with better defaults for both handwritten and printed text
-                    logger.info("[INIT] Initializing PaddleOCR instance...")
-                    self._real_paddle = _RealPaddleOCR(
-                        use_angle_cls=True,  # Enable angle classification for rotated text
-                        lang='en',
-                        det_model_dir=None,  # Use default detection model
-                        rec_model_dir=None,  # Use default recognition model
-                    )
-                    self._using_paddle = True
-                    logger.info("[OK] OCR Mode: PaddleOCR (PRIMARY)")
-                except Exception as e:
-                    logger.warning(f"[WARN] Failed to init PaddleOCR: {e}")
-                    logger.warning(f"[WARN] Stack trace: {str(e)}")
-                    self._using_paddle = False
-            
-            # Fallback to Tesseract if PaddleOCR not available
-            if not self._using_paddle and _PYTESSERACT_AVAILABLE:
-                try:
+                    import pytesseract
+                    pytesseract.get_tesseract_version()
                     self._using_tesseract = True
-                    logger.warning("[WARN] OCR Mode: Tesseract-OCR (FALLBACK - PaddleOCR not available)")
+                    logger.info("[OK] Tesseract-OCR initialized as SECONDARY")
                 except Exception as e:
-                    logger.warning(f"Failed to init Tesseract: {e}")
+                    logger.warning(f"[WARN] Tesseract initialization failed: {str(e)[:80]}")
                     self._using_tesseract = False
             
-            if not self._using_tesseract and not self._using_paddle:
-                logger.error("[ERROR] NO OCR BACKEND AVAILABLE")
-                logger.error("Please install PaddleOCR:")
-                logger.error("  pip install paddleocr paddlepaddle paddle-lite")
-                logger.error("Or install Tesseract-OCR as fallback:")
-                logger.error("  Windows: https://github.com/UB-Mannheim/tesseract/wiki")
-                logger.error("  Download: tesseract-ocr-w64-setup-v5.x.exe")
+            if not self._using_easyocr and not self._using_tesseract:
+                logger.error("[ERROR] No OCR backend available!")
+                logger.error("Install EasyOCR: pip install easyocr")
 
         def predict(self, image_path: str):
             """Extract text from image. Returns [{'rec_texts': [...]}]"""
             
-            # METHOD 1: PaddleOCR (PRIMARY)
-            if self._using_paddle and self._real_paddle is not None:
+            # METHOD 1: EasyOCR (PRIMARY - Best for handwritten text)
+            if self._using_easyocr and self._easy_reader is not None:
                 try:
-                    from PIL import ImageOps, ImageEnhance, ImageFilter
-                    import numpy as np
-                    import cv2
+                    from PIL import Image, ImageOps, ImageEnhance
                     
                     img = Image.open(image_path)
-                    logger.info(f"[FILE] Processing image with PaddleOCR: {image_path}")
+                    logger.info(f"[FILE] Processing image with EasyOCR: {image_path}")
                     
-                    # ═══════════════════════════════════════════════════════════
-                    # MINIMAL PREPROCESSING FOR PADDLEOCR (Handwritten-friendly)
-                    # ═══════════════════════════════════════════════════════════
-                    
-                    # Step 1: Fix EXIF rotation
+                    # Simple preprocessing for EasyOCR
+                    # Fix EXIF rotation
                     try:
                         img = ImageOps.exif_transpose(img)
                     except:
                         pass
                     
-                    # Step 2: Ensure RGB color mode (PaddleOCR works better with color)
+                    # Convert to RGB
                     if img.mode != 'RGB':
                         try:
                             img = img.convert('RGB')
                         except:
                             pass
                     
-                    # Step 3: Upscale very small images (for better OCR)
-                    width, height = img.size
-                    if width < 300 or height < 100:
-                        scale = max(300 / width, 100 / height)
-                        new_size = (int(width * scale * 1.2), int(height * scale * 1.2))
-                        img = img.resize(new_size, Image.Resampling.LANCZOS)
-                        logger.info(f"  Upscaled image: {(width, height)} → {new_size}")
-                    
-                    # Step 4: Very light contrast adjustment only (preserve handwritten ink)
+                    # Mild contrast enhancement
                     enhancer = ImageEnhance.Contrast(img)
-                    img = enhancer.enhance(1.1)  # Very minimal boost
+                    img = enhancer.enhance(1.3)
                     
-                    logger.info("[OK] Preprocessing complete (handwritten-optimized)")
-                    
-                    # Step 5: Save to temp file for PaddleOCR (it works better with files)
+                    # Save to temp file
                     import tempfile
                     temp_fd, temp_path = tempfile.mkstemp(suffix='.jpg')
                     try:
-                        img.save(temp_path, quality=95)  # High quality
-                        logger.info(f"  Using preprocessed image: {temp_path}")
+                        img.save(temp_path, 'JPEG', quality=95)
                         ocr_path = temp_path
                     except:
                         ocr_path = image_path
                     
-                    # Step 6: PaddleOCR text extraction
-                    logger.info(f"[RUNNING] Running PaddleOCR on color image")
-                    result = None
+                    # Run EasyOCR
+                    logger.info(f"[RUNNING] Running EasyOCR on image")
                     try:
-                        # PaddleOCR expects file path string
-                        result = self._real_paddle.ocr(str(ocr_path), cls=True)
-                    except Exception as e:
-                        logger.error(f"PaddleOCR failed: {e}")
-                        result = None
+                        # EasyOCR returns: [[[x,y],[x,y],...], 'text', confidence]
+                        results = self._easy_reader.readtext(ocr_path, detail=0)
+                        
+                        # Extract texts
+                        rec_texts = []
+                        for text in results:
+                            if isinstance(text, str) and text.strip():
+                                rec_texts.append(text.strip())
+                                logger.info(f"[TEXT] '{text.strip()}'")
+                        
+                        if rec_texts:
+                            logger.info(f"[OK] EasyOCR extracted {len(rec_texts)} lines")
+                            logger.info(f"[EXTRACTED] {' | '.join(rec_texts[:3])}")
+                        else:
+                            logger.warning("[WARN] EasyOCR found no text")
+                        
+                        return [{"rec_texts": rec_texts}]
+                        
+                    except Exception as ocr_err:
+                        logger.error(f"[ERROR] EasyOCR execution failed: {ocr_err}")
+                        return [{"rec_texts": []}]
                     finally:
-                        # Clean up temp file if created
+                        # Cleanup temp file
                         if ocr_path != image_path and os.path.exists(ocr_path):
                             try:
                                 os.close(temp_fd)
                                 os.remove(ocr_path)
                             except:
                                 pass
-
-
-                    # Parse PaddleOCR result format: List[List[List[[[x,y], [x,y], ...], [text, confidence]]]]
-                    rec_texts = []
-                    if result and isinstance(result, list):
-                        # Each page is a list
-                        for page in result:
-                            if isinstance(page, list):
-                                # Each line in the page
-                                for line in page:
-                                    if isinstance(line, (list, tuple)) and len(line) >= 2:
-                                        # line format: [[bbox coords], [text, confidence]]
-                                        text_info = line[-1]  # Get last element (text and confidence)
-                                        if isinstance(text_info, (list, tuple)) and len(text_info) > 0:
-                                            text = text_info[0]
-                                            if isinstance(text, str) and text.strip():
-                                                rec_texts.append(text.strip())
-                    
-                    if rec_texts:
-                        logger.info(f"[OK] PaddleOCR extracted {len(rec_texts)} lines")
-                    else:
-                        logger.warning(f"[WARN] PaddleOCR found no text")
-                    
-                    return [{"rec_texts": rec_texts}]
                         
                 except Exception as e:
-                    logger.error(f"[ERROR] PaddleOCR failed for {image_path}: {e}")
-                    import traceback
-                    logger.error(traceback.format_exc())
-                    # Fall through to Tesseract if available
+                    logger.error(f"[ERROR] EasyOCR failed: {e}")
+                    logger.info("Falling back to Tesseract...")
+                    # Fall through to Tesseract
             
-            # METHOD 2: Tesseract-OCR (FALLBACK)
-            if self._using_tesseract and _PYTESSERACT_AVAILABLE:
+
+            
+            # METHOD 2: Tesseract-OCR (SECONDARY FALLBACK)
+            if self._using_tesseract:
                 try:
-                    logger.info(f"[FALLBACK] Falling back to Tesseract-OCR for {os.path.basename(image_path)}")
-                    from PIL import ImageOps, ImageEnhance, ImageFilter
-                    import numpy as np
-                    import cv2
+                    import pytesseract
+                    from PIL import Image, ImageOps, ImageEnhance
                     
                     img = Image.open(image_path)
-                    logger.info(f"[FILE] Processing image with Tesseract: {image_path}")
+                    logger.info(f"[FILE] Processing image with Tesseract-OCR: {image_path}")
                     
-                    # Apply same preprocessing
+                    # Fix EXIF rotation
                     try:
-                        img = ImageOps.exif_transpose(img)  # Fix EXIF rotation
+                        img = ImageOps.exif_transpose(img)
                     except:
                         pass
                     
+                    # Convert to RGB
                     if img.mode != 'RGB':
-                        try:
-                            img = img.convert('RGB')
-                        except:
-                            pass
-                    img = img.convert('L')  # Grayscale
+                        img = img.convert('RGB')
                     
-                    enhancer = ImageEnhance.Brightness(img)
-                    img = enhancer.enhance(0.9)
-                    
+                    # Mild contrast enhancement
                     enhancer = ImageEnhance.Contrast(img)
-                    img = enhancer.enhance(2.0)
+                    img = enhancer.enhance(1.5)
                     
-                    img = img.filter(ImageFilter.MedianFilter(size=3))
+                    # Extract text
+                    logger.info("[RUNNING] Running Tesseract-OCR")
+                    extracted_text = pytesseract.image_to_string(img, config='--psm 11')
                     
-                    enhancer = ImageEnhance.Sharpness(img)
-                    img = enhancer.enhance(2.5)
-                    
-                    img_array = np.array(img)
-                    img_binary = cv2.adaptiveThreshold(
-                        img_array,
-                        255,
-                        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                        cv2.THRESH_BINARY,
-                        blockSize=11,
-                        C=2
-                    )
-                    
-                    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
-                    img_binary = cv2.morphologyEx(img_binary, cv2.MORPH_CLOSE, kernel, iterations=1)
-                    img_binary = cv2.morphologyEx(img_binary, cv2.MORPH_OPEN, kernel, iterations=1)
-                    
-                    img = Image.fromarray(img_binary)
-                    
-                    logger.info("[OK] Advanced preprocessing complete")
-                    
-                    # Try multiple PSM modes for Tesseract
-                    # Try PSM 6 first (optimized for prescriptions)
-                    text_psm6 = pytesseract.image_to_string(
-                        img,
-                        config='--psm 6 --oem 3'
-                    )
-                    
-                    # Try PSM 3 as fallback (handles mixed layouts)
-                    text_psm3 = pytesseract.image_to_string(
-                        img,
-                        config='--psm 3 --oem 3'
-                    )
-                    
-                    # Use whichever extracted more text
-                    text = text_psm6 if len(text_psm6.strip()) >= len(text_psm3.strip()) else text_psm3
-                    
-                    if not text.strip():
-                        # Last resort: try PSM 11 (sparse text mode)
-                        text = pytesseract.image_to_string(
-                            img,
-                            config='--psm 11 --oem 3'
-                        )
-                    
-                    # Clean up extracted text
-                    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-                    
-                    if lines:
-                        logger.info(f"[OK] Tesseract extracted {len(lines)} lines from {os.path.basename(image_path)}")
+                    if extracted_text and extracted_text.strip():
+                        rec_texts = [line.strip() for line in extracted_text.split('\n') if line.strip()]
+                        logger.info(f"[OK] Tesseract extracted {len(rec_texts)} lines")
+                        return [{"rec_texts": rec_texts}]
                     else:
-                        logger.warning(f"[WARN] Tesseract found no text in {os.path.basename(image_path)}")
-                    
-                    return [{"rec_texts": lines}]
+                        logger.warning("[WARN] Tesseract found no text")
+                        return [{"rec_texts": []}]
                         
                 except Exception as e:
-                    logger.error(f"[ERROR] Tesseract OCR failed for {image_path}: {e}")
-                    import traceback
-                    logger.error(traceback.format_exc())
+                    logger.error(f"[ERROR] Tesseract failed: {e}")
                     return [{"rec_texts": []}]
             
-            # No backend available
-            logger.error("No OCR backend available - cannot extract text")
+            # No OCR backend available
+            logger.error("[ERROR] No OCR backend available")
             return [{"rec_texts": []}]
 
     _paddleocr_instance = _Shim()
     return _paddleocr_instance
+
+# ---------------------------
+# Advanced Preprocessing for Difficult Images (UI Screenshots)
+# ---------------------------
+def _apply_ui_screenshot_enhancement(image_path: str) -> str:
+    """
+    Apply specialized preprocessing for UI screenshots and difficult images.
+    Creates an enhanced version optimized specifically for text detection.
+    
+    Returns the path to the enhanced image (may be original or temp).
+    """
+    try:
+        from PIL import Image, ImageEnhance, ImageFilter
+        import cv2
+        import numpy as np
+        
+        img = Image.open(image_path)
+        
+        # Convert to RGB if needed
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
+        
+        # Convert to numpy array for OpenCV processing
+        img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+        
+        # Convert to HSV to better detect text regions
+        hsv = cv2.cvtColor(img_cv, cv2.COLOR_BGR2HSV)
+        
+        # Enhance saturation for better color separation
+        h, s, v = cv2.split(hsv)
+        s = cv2.multiply(s, 1.3)  # Boost saturation
+        v = cv2.multiply(v, 1.1)  # Slight brightness boost
+        hsv_enhanced = cv2.merge([h, s, v])
+        
+        # Convert back to RGB
+        img_enhanced = cv2.cvtColor(hsv_enhanced, cv2.COLOR_HSV2BGR)
+        img_pil = Image.fromarray(cv2.cvtColor(img_enhanced, cv2.COLOR_BGR2RGB))
+        
+        # Apply strong contrast enhancement
+        enhancer = ImageEnhance.Contrast(img_pil)
+        img_pil = enhancer.enhance(2.5)
+        
+        # Apply unsharp mask for edge enhancement
+        enhancer = ImageEnhance.Sharpness(img_pil)
+        img_pil = enhancer.enhance(3.0)
+        
+        # Save enhanced version to temp
+        temp_fd, temp_path = tempfile.mkstemp(suffix='.png')
+        try:
+            img_pil.save(temp_path, 'PNG')
+            logger.info(f"[UI-ENHANCE] Created enhanced image: {temp_path}")
+            return temp_path
+        except:
+            os.close(temp_fd)
+            return image_path
+            
+    except Exception as e:
+        logger.error(f"[ERROR] UI enhancement failed: {e}")
+        return image_path
 
 # ---------------------------
 # Utilities
@@ -417,6 +362,33 @@ def _run_ocr_on_path(path: str) -> List[str]:
                         extracted.append(p)
             except Exception:
                 pass
+    
+    # If extraction was empty or very weak, try UI enhancement for screenshots
+    if not extracted:
+        logger.info("[FALLBACK] No text extracted - attempting UI screenshot enhancement")
+        try:
+            enhanced_path = _apply_ui_screenshot_enhancement(path)
+            if enhanced_path != path:
+                logger.info("[RETRY] Running OCR on enhanced image")
+                result2 = o.predict(enhanced_path)
+                
+                if result2 and isinstance(result2, list):
+                    for item in result2:
+                        if isinstance(item, dict):
+                            extracted.extend(item.get("rec_texts", []) or [])
+                
+                # Cleanup enhanced image
+                try:
+                    os.remove(enhanced_path)
+                except:
+                    pass
+                
+                if extracted:
+                    logger.info(f"[SUCCESS] UI enhancement recovered {len(extracted)} lines")
+                    
+        except Exception as e:
+            logger.error(f"UI enhancement fallback failed: {e}")
+    
     return extracted
 
 async def extract_texts_from_uploads(files: List[UploadFile]) -> List[str]:

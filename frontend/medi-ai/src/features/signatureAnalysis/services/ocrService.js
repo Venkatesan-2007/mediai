@@ -77,7 +77,15 @@ export const extractTextFromImage = (imageFile, progressCallback) => {
                     } else {
                         reject({
                             success: false,
-                            message: 'No text could be extracted from the image. Please try a clearer image.'
+                            title: 'No Text Detected',
+                            message: 'The OCR system couldn\'t extract any text from this image.',
+                            suggestions: [
+                                'Ensure the image contains clear, readable text (medical documents, prescriptions, signatures)',
+                                'Check image brightness and contrast - text should be clearly visible',
+                                'Avoid uploading UI screenshots, icons, or images without text',
+                                'Try adjusting the image angle so text is straight and readable',
+                                'Make sure the photo is not blurry or tilted'
+                            ]
                         });
                     }
                 } 
@@ -94,13 +102,29 @@ export const extractTextFromImage = (imageFile, progressCallback) => {
                     } else {
                         reject({
                             success: false,
-                            message: 'No text could be extracted from the image. Please try a clearer image.'
+                            title: 'No Text Detected',
+                            message: 'The OCR system couldn\'t extract any text from this image.',
+                            suggestions: [
+                                'Ensure the image contains clear, readable text (medical documents, prescriptions, signatures)',
+                                'Check image brightness and contrast - text should be clearly visible',
+                                'Avoid uploading UI screenshots, icons, or images without text',
+                                'Try adjusting the image angle so text is straight and readable',
+                                'Make sure the photo is not blurry or tilted'
+                            ]
                         });
                     }
                 } else {
                     reject({
                         success: false,
-                        message: 'No text could be extracted from the image. Please try a clearer image.'
+                        title: 'No Text Detected',
+                        message: 'The OCR system couldn\'t extract any text from this image.',
+                        suggestions: [
+                            'Ensure the image contains clear, readable text (medical documents, prescriptions, signatures)',
+                            'Check image brightness and contrast - text should be clearly visible',
+                            'Avoid uploading UI screenshots, icons, or images without text',
+                            'Try adjusting the image angle so text is straight and readable',
+                            'Make sure the photo is not blurry or tilted'
+                        ]
                     });
                 }
             })

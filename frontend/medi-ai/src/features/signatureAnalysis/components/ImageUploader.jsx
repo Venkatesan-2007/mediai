@@ -167,6 +167,18 @@ const ImageUploader = ({ onImageSelect, disabled = false }) => {
                         <p className="text-gray-400 text-xs mt-4">
                             Supported formats: JPG, PNG, GIF (Max 10MB)
                         </p>
+                        
+                        {/* Helpful Tips */}
+                        <div className="mt-6 pt-4 border-t border-pink-200">
+                            <p className="text-gray-500 text-xs font-semibold mb-2">✓ Best results with:</p>
+                            <ul className="text-gray-400 text-xs space-y-1 text-left max-w-xs mx-auto">
+                                <li>• Clear, well-lit medical documents</li>
+                                <li>• Prescriptions, signatures, or medical reports</li>
+                                <li>• Handwritten or printed text (not UI screenshots)</li>
+                                <li>• High contrast between text and background</li>
+                                <li>• Straight-on angle (not tilted photos)</li>
+                            </ul>
+                        </div>
                     </div>
                 )}
             </div>

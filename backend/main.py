@@ -1089,8 +1089,7 @@ async def chat(
             sources = list(set([chunk.get("source", "unknown") for chunk in relevant_chunks]))
             
             # Cache result
-            cache_key = f"{mode}:{question}"
-            search_cache.set(cache_key, current_user.id, {'answer': response, 'sources': sources})
+            search_cache.set(question, current_user.id, [{'answer': response, 'sources': sources}])
             
             elapsed_time = (datetime.now() - start_time).total_seconds()
             logger.info(f"[RAG MODE] Completed in {elapsed_time:.2f}s")
@@ -1159,7 +1158,7 @@ async def chat_public(chat_request: ChatRequest):
                 response = "I'm here to help with medical questions! Upload PDF documents for document-specific answers, or ask me general health questions."
         
         # Cache the result
-        search_cache.set(question, user_id=0, data={'answer': response, 'sources': []})
+        search_cache.set(question, user_id=0, results=[{'answer': response, 'sources': []}])
         
         elapsed_time = (datetime.now() - start_time).total_seconds()
         logger.info(f"Public chat completed in {elapsed_time:.2f}s")
@@ -1916,6 +1915,212 @@ ORIGINAL EXTRACTED TEXT
     report += "\n\n═══════════════════════════════════════════════════════════════════════════════"
     
     return report
+
+# ============================================================================
+# SIGNATURE ANALYSIS ENDPOINTS (Tesseract + Ollama)
+# ============================================================================
+
+# Initialize signature analyzer
+signature_analyzer = None
+try:
+    from services.signature_analyzer import SignatureAnalyzer
+    signature_analyzer = SignatureAnalyzer(llm=llm)
+    logger.info("[OK] Signature analyzer initialized with Tesseract + Ollama")
+except ImportError as e:
+    logger.warning(f"[WARN] Signature analyzer not available: {str(e)}")
+except Exception as e:
+    logger.warning(f"[WARN] Error initializing signature analyzer: {str(e)}")
+
+class SignatureAnalysisRequest(BaseModel):
+    patient_name: Optional[str] = None
+    patient_age: Optional[int] = None
+    patient_id: Optional[str] = None
+
+class SignatureAnalysisResponse(BaseModel):
+    success: bool
+    extracted_text: str
+    ocr_confidence: float
+    ocr_word_count: int
+    analysis: str
+    medications: List[str]
+    warnings: List[str]
+    ai_analysis_available: bool
+
+@app.post("/api/analyze-signature-tesseract", response_model=SignatureAnalysisResponse)
+async def analyze_signature_tesseract(
+    file: UploadFile = File(...),
+    patient_name: Optional[str] = None,
+    patient_age: Optional[int] = None,
+    patient_id: Optional[str] = None,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Analyze prescription signature/handwriting using Tesseract OCR and Ollama AI
+    
+    Features:
+    - Extract text from prescription images using Tesseract OCR
+    - Preprocess images for better accuracy
+    - Analyze extracted prescription with Ollama LLM
+    - Identify medications and warnings
+    - Requires authentication
+    """
+    temp_path = None
+    try:
+        if not signature_analyzer:
+            raise HTTPException(
+                status_code=503,
+                detail="Signature analyzer not initialized. Ensure Tesseract is installed."
+            )
+        
+        # Validate image file
+        valid_types = {'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/bmp'}
+        if file.content_type not in valid_types:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid file type. Upload JPG, PNG, or BMP"
+            )
+        
+        logger.info(f"[TESSERACT] Analyzing prescription signature: {file.filename}")
+        
+        # Save temp file
+        import tempfile
+        temp_dir = tempfile.gettempdir()
+        temp_path = os.path.join(temp_dir, f"sig_{uuid.uuid4()}_{file.filename}")
+        
+        content = await file.read()
+        with open(temp_path, "wb") as f:
+            f.write(content)
+        
+        # Load and analyze image
+        from PIL import Image
+        image = Image.open(temp_path)
+        
+        # Prepare patient info
+        patient_info = None
+        if any([patient_name, patient_age, patient_id]):
+            patient_info = {
+                'name': patient_name,
+                'age': patient_age,
+                'id': patient_id
+            }
+        
+        # Run analysis
+        logger.info("[TESSERACT] Starting Tesseract OCR + Ollama analysis...")
+        result = signature_analyzer.analyze_signature_image(image, patient_info)
+        
+        logger.info(f"[TESSERACT] ✓ Analysis complete: {result['ocr_word_count']} words, {result['ocr_confidence']:.1f}% confidence")
+        
+        return result
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[TESSERACT] Error analyzing signature: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error analyzing signature: {str(e)}"
+        )
+    finally:
+        # Cleanup
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except:
+                pass
+
+@app.post("/api/analyze-prescription-ocr", response_model=ChatResponse)
+async def analyze_prescription_ocr(
+    file: UploadFile = File(...),
+    patient_name: Optional[str] = None,
+    patient_age: Optional[int] = None,
+    patient_id: Optional[str] = None,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Complete prescription analysis: OCR extraction + AI diagnosis
+    
+    Returns:
+    - answer: AI-generated medical analysis
+    - sources: Technical details about OCR processing
+    """
+    temp_path = None
+    try:
+        if not signature_analyzer:
+            raise HTTPException(
+                status_code=503,
+                detail="OCR analyzer not initialized"
+            )
+        
+        # Validate image file
+        valid_types = {'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/bmp'}
+        if file.content_type not in valid_types:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid file type. Upload JPG, PNG, or BMP"
+            )
+        
+        logger.info(f"[OCR-ANALYSIS] Processing prescription: {file.filename}")
+        
+        # Save temp file
+        import tempfile
+        temp_dir = tempfile.gettempdir()
+        temp_path = os.path.join(temp_dir, f"ocr_{uuid.uuid4()}_{file.filename}")
+        
+        content = await file.read()
+        with open(temp_path, "wb") as f:
+            f.write(content)
+        
+        # Load and analyze image
+        from PIL import Image
+        image = Image.open(temp_path)
+        
+        # Prepare patient info
+        patient_info = None
+        if any([patient_name, patient_age, patient_id]):
+            patient_info = {
+                'name': patient_name,
+                'age': patient_age,
+                'id': patient_id
+            }
+        
+        # Run OCR + Analysis
+        result = signature_analyzer.analyze_signature_image(image, patient_info)
+        
+        # Format response as ChatResponse
+        answer = result.get('analysis', '')
+        if not answer and result.get('success'):
+            answer = f"OCR Extraction Complete\nText Confidence: {result['ocr_confidence']:.1f}%\nWords Extracted: {result['ocr_word_count']}\n\nExtracted Text:\n{result['extracted_text']}"
+        
+        sources = [
+            f"OCR Method: Tesseract",
+            f"Confidence: {result['ocr_confidence']:.1f}%",
+            f"Words: {result['ocr_word_count']}",
+            f"Medications Found: {len(result['medications'])}"
+        ]
+        
+        if result['warnings']:
+            sources.append(f"Warnings: {len(result['warnings'])}")
+        
+        return ChatResponse(
+            answer=answer,
+            sources=sources
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[OCR-ANALYSIS] Error: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Prescription analysis failed: {str(e)}"
+        )
+    finally:
+        # Cleanup
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except:
+                pass
 
 # ============================================================================
 # ROOT ENDPOINT

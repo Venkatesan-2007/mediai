@@ -35,7 +35,12 @@ services:
     ports:
       - "8000:8000"
     volumes:
+      # Named volumes for persistent data
       - medi_ai_backend_data:/app/data
+      - chroma_db_data:/app/database/chroma_db
+      - backend_cache:/app/.cache
+      # Bind mounts for development
+      - ./backend:/app
       - ./backend/database:/app/database
     depends_on:
       postgres:
@@ -54,8 +59,15 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - medi_ai_frontend_data:/app
+      # Named volumes for build and node_modules (improves performance)
+      - medi_ai_frontend_data:/app/build
+      - frontend_node_modules:/app/node_modules
+      # Bind mounts for development (hot reload)
       - ./frontend/medi-ai/src:/app/src
+      - ./frontend/medi-ai/public:/app/public
+      - ./frontend/medi-ai/package.json:/app/package.json
+      - ./frontend/medi-ai/tailwind.config.js:/app/tailwind.config.js
+      - ./frontend/medi-ai/postcss.config.js:/app/postcss.config.js
     depends_on:
       - backend
     networks:
@@ -71,6 +83,14 @@ volumes:
   medi_ai_backend_data:
     driver: local
   medi_ai_frontend_data:
+    driver: local
+  # Backend volumes
+  chroma_db_data:
+    driver: local
+  backend_cache:
+    driver: local
+  # Frontend volumes
+  frontend_node_modules:
     driver: local
 
 networks:
