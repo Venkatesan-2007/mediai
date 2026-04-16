@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../../shared/contexts/AuthContext';
 import { sendMessage, getUploadedBooks } from '../../../shared/services/authService';
 import '../../../shared/styles/Chat.css';
@@ -71,6 +72,7 @@ const MessageBubble = ({ msg }) => {
 
 /* ── main component ── */
 const Chat = () => {
+  const navigate = useNavigate();
   const { logout, user } = useAuth();
   const [messages, setMessages] = useState([WELCOME]);
   const [input, setInput] = useState('');
@@ -274,6 +276,11 @@ const Chat = () => {
               </svg>
             </button>
           )}
+          <button className="back-btn" onClick={() => navigate('/dashboard')} title="Back to Dashboard">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
           <div className="topbar-title">
             <div className="topbar-status-dot" />
             <h1>Medical RAG Chatbot</h1>

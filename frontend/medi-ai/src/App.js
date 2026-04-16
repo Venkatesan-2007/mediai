@@ -4,7 +4,6 @@ import { AuthProvider, useAuth } from './shared/contexts/AuthContext';
 import Login from './features/auth/pages/Login';
 import Dashboard from './features/dashboard/pages/Dashboard';
 import Chat from './features/chat/pages/Chat';
-import SignatureAnalysis from './features/signatureAnalysis/pages/SignatureAnalysis';
 import QuestionBuilder from './features/questionBuilder/pages/QuestionBuilder';
 import Booklist from './features/books/pages/Booklist';
 
@@ -54,16 +53,6 @@ function AppContent() {
         element={
           <ProtectedRoute>
             <Chat />
-          </ProtectedRoute>
-        }
-      />
-
-      {/* Protected Routes - Signature Analysis */}
-      <Route
-        path="/signature-analysis"
-        element={
-          <ProtectedRoute>
-            <SignatureAnalysis />
           </ProtectedRoute>
         }
       />

@@ -89,10 +89,10 @@ const QuestionBuilder = () => {
     }, [searchQuery, booksList]);
 
     /**
-     * Handle back button click - navigate to dashboard or booklist
+     * Handle back button click - navigate to dashboard
      */
     const handleBack = () => {
-        navigate(selectedBook ? '/booklist' : '/dashboard');
+        navigate('/dashboard');
     };
 
     /**

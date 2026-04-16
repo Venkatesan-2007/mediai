@@ -264,6 +264,19 @@
 .open-sidebar-btn:hover { color: #e2e8f0; background: rgba(255,255,255,0.06); }
 .open-sidebar-btn svg { width: 20px; height: 20px; }
 
+.back-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #64748b;
+  padding: 6px;
+  border-radius: 8px;
+  display: flex;
+  transition: color 0.2s, background 0.2s;
+}
+.back-btn:hover { color: #e2e8f0; background: rgba(255,255,255,0.06); }
+.back-btn svg { width: 20px; height: 20px; }
+
 .topbar-title {
   display: flex;
   align-items: center;

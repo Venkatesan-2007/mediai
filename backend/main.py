@@ -42,7 +42,6 @@ from services.sambanova_api import SambanovaLLM
 from services.ollama_service import OllamaLLM
 from services.database import init_db, get_db, User, Book, engine, Base
 from services.auth import hash_password, verify_password, create_access_token, verify_access_token
-from services.prescription_service import PrescriptionGenerationService, PrescriptionResponse
 from services.cache import search_cache
 # OCR router will be imported lazily after app initialization
 
@@ -1174,146 +1173,6 @@ async def chat_public(chat_request: ChatRequest):
         logger.error(f"Error in public chat endpoint: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error processing question: {str(e)}")
 
-
-@app.post("/api/generate-prescription", response_model=PrescriptionResponse)
-async def generate_prescription(
-    files: list[UploadFile] = File(...),
-    patient_info: Optional[str] = None
-):
-    """
-    Generate medical prescription from clinical images using AI.
-    
-    Accepts medical images (X-rays, medical reports, clinical notes photos, etc.),
-    extracts clinical findings via OCR, and generates appropriate prescriptions
-    using SambaNova AI.
-    
-    No document search - pure generative AI prescription generation.
-    No database storage - returns prescription only.
-    
-    Args:
-        files: List of medical image files (JPG, PNG, TIFF, etc.)
-        patient_info: Optional patient information context
-    
-    Returns: PrescriptionResponse with structured prescription + narrative report
-    """
-    try:
-        if not llm:
-            raise HTTPException(
-                status_code=500,
-                detail="AI service not initialized. SambaNova API credentials missing."
-            )
-        
-        print(f"\n{'='*60}")
-        print(f"💊 Prescription Generation Request")
-        print(f"{'='*60}")
-        
-        # Step 1: Validate and extract text from images using OCR
-        print(f"📸 Processing {len(files)} medical image(s)...")
-        
-        from services.ocr_service import extract_texts_from_uploads
-        
-        # Extract text from images via OCR
-        extracted_texts = await extract_texts_from_uploads(files)
-        
-        # If OCR fails, use LLM to generate clinical context from image analysis
-        if not extracted_texts or all(not text.strip() for text in extracted_texts):
-            print(f"[WARN] OCR extracted no text, using AI model for image interpretation...")
-            
-            # Generate synthetic clinical text using the LLM
-            filenames = [f.filename for f in files]
-            prompt = f"""You are a medical AI analyzing uploaded medical images or documents.
-            
-The following files were uploaded: {', '.join(filenames)}
-
-Based on typical medical image content and the file names, generate realistic clinical findings 
-that would appear in a {', '.join(filenames)} document. Include:
-- Key clinical findings
-- Symptoms or observations
-- Relevant medical measurements or values
-- Diagnostic impressions
-- Any noted conditions or abnormalities
-
-Generate as if extracting text directly from the medical document. Format as continuous text."""
-            
-            try:
-                llm_response = llm.generate_response(
-                    question=prompt,
-                    relevant_chunks=[],
-                    max_tokens=512,
-                    temperature=0.5
-                )
-                extracted_texts = [llm_response]
-                print(f"[OK] AI model generated clinical findings ({len(llm_response)} characters)")
-            except Exception as llm_e:
-                print(f"[WARN] AI model also failed: {str(llm_e)}")
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Could not extract text from medical images. Error: {str(llm_e)}. Please provide clear, readable medical documents or ensure the image contains medical content."
-                )
-        
-        # Combine all extracted texts
-        clinical_text = "\n".join(extracted_texts)
-        
-        print(f"[OK] Extracted text from {len(extracted_texts)} image(s)")
-        print(f"  Text length: {len(clinical_text)} characters")
-        
-        # Step 2: Generate prescription using SambaNova AI
-        print(f"\n💉 Generating prescription with AI...")
-        
-        prescription_service = PrescriptionGenerationService(llm)
-        prescription_response = prescription_service.generate_prescription(
-            clinical_text=clinical_text,
-            patient_info=patient_info,
-            max_tokens=1024,
-            temperature=0.5
-        )
-        
-        print(f"\n{'='*60}")
-        print(f"[OK] Prescription generated successfully!")
-        print(f"   Medicines: {len(prescription_response.structured.medicines)}")
-        print(f"   Diagnosis: {prescription_response.structured.diagnosis}")
-        print(f"{'='*60}\n")
-        
-        return prescription_response
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"\n[ERROR] Prescription generation error: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Prescription generation failed: {str(e)}"
-        )
-
-# ============================================================================
-# PRESCRIPTION ANALYSIS FROM OCR
-# ============================================================================
-
-class PrescriptionAnalysisRequest(BaseModel):
-    """Request to analyze prescription from OCR text"""
-    extracted_text: str
-    patient_name: Optional[str] = None
-    patient_age: Optional[int] = None
-    patient_id: Optional[str] = None
-
-class MedicationInfo(BaseModel):
-    """Information about a medication"""
-    name: str
-    dosage: Optional[str] = None
-    frequency: Optional[str] = None
-    purpose: str
-    side_effects: Optional[str] = None
-    contraindications: Optional[str] = None
-
-class PrescriptionAnalysisResponse(BaseModel):
-    """Detailed prescription analysis response"""
-    patient_info: dict
-    extracted_medications: List[MedicationInfo]
-    diagnosed_conditions: List[str]
-    analysis_summary: str
-    detailed_report: str
-    confidence_score: float
-
 # ============================================================================
 # QUESTION GENERATION MODELS
 # ============================================================================
@@ -1573,555 +1432,126 @@ def _generate_questions_from_book_content(
     question_type: str = "mixed"
 ) -> List[QuestionItem]:
     """
-    Generate study questions directly from book content using LLM
-    This ensures questions are based on the actual book provided
+    Generate study questions directly from book content using SambaNova LLM
+    This ensures questions are based on the actual book provided with high quality
     """
     try:
-        # Initialize SambanovaLLM for question generation
-        sambanova_api_key = os.getenv("SAMBANOVA_API_KEY")
-        sambanova_api_url = os.getenv("SAMBANOVA_API_URL")
+        # Use the global LLM instance if available
+        if not llm:
+            raise ValueError("LLM not initialized")
         
-        if not sambanova_api_key or not sambanova_api_url:
-            raise ValueError("SAMBANOVA_API_KEY or SAMBANOVA_API_URL not set")
-        
-        llm_instance = SambanovaLLM(api_key=sambanova_api_key, api_url=sambanova_api_url)
-        
-        # Select question types
-        if question_type == "mixed":
-            selected_types = ["multiple_choice", "true_false", "short_answer"]
-        else:
-            selected_types = [question_type]
-        
-        # Create prompt for generating questions from book content
-        prompt = f"""Based ONLY on the following book content, generate {num_questions} study questions about the topic '{topic}'.
-
-IMPORTANT: Generate questions ONLY from the provided content. Do not use outside knowledge.
-
-Book Content:
-{book_content}
-
-Generate {num_questions} questions with the following requirements:
-- Difficulty levels: Mixed (some easy, some medium, some hard)
-- Question types: Mix of multiple choice, true/false, and short answer
-- Questions MUST be answerable from the provided content
-
-Format your response as a JSON array like this:
-[
-  {{
-    "question": "Question text?",
-    "type": "multiple_choice",
-    "difficulty": "easy",
-    "options": ["Option A", "Option B", "Option C", "Option D"],
-    "correct_answer": "Option A",
-    "explanation": "Explanation based on the content"
-  }},
-  ...
-]
-
-Only return the JSON array, no other text."""
-
-        # Get response from LLM
         logger.info(f"Generating {num_questions} questions from book content about '{topic}'...")
-        response = llm_instance.generate_response(
-            question=prompt,
-            relevant_chunks=[],
-            max_tokens=2000,
-            temperature=0.7
+        
+        # Use the new generate_questions method from SambaNova
+        questions_data = llm.generate_questions(
+            topic=topic,
+            num_questions=num_questions,
+            difficulty=difficulty,
+            question_type=question_type,
+            book_content=book_content,
+            max_tokens=2048
         )
         
-        # Parse JSON response
-        import json
-        try:
-            # Try to extract JSON from response
-            json_start = response.find('[')
-            json_end = response.rfind(']') + 1
-            if json_start >= 0 and json_end > json_start:
-                json_str = response[json_start:json_end]
-                questions_data = json.loads(json_str)
-            else:
-                raise ValueError("No JSON array found in response")
-            
-            # Convert to QuestionItem objects
-            questions = []
-            for q_data in questions_data[:num_questions]:
-                question = QuestionItem(
-                    question=q_data.get("question", ""),
-                    type=q_data.get("type", "multiple_choice"),
-                    difficulty=q_data.get("difficulty", "medium"),
-                    options=q_data.get("options"),
-                    correct_answer=q_data.get("correct_answer"),
-                    explanation=q_data.get("explanation", "")
-                )
-                questions.append(question)
-            
-            logger.info(f"[OK] Successfully generated {len(questions)} questions from book content")
-            return questions
+        # Convert to QuestionItem objects
+        questions = []
+        for q_data in questions_data[:num_questions]:
+            question = QuestionItem(
+                question=q_data.get("question", ""),
+                type=q_data.get("type", "multiple_choice"),
+                difficulty=q_data.get("difficulty", "medium"),
+                options=q_data.get("options"),
+                correct_answer=q_data.get("correct_answer"),
+                explanation=q_data.get("explanation", "")
+            )
+            questions.append(question)
         
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse LLM response as JSON: {str(e)}")
-            logger.debug(f"LLM Response: {response}")
-            raise
+        logger.info(f"✓ Generated {len(questions)} high-quality questions from book content using SambaNova AI")
+        return questions
     
+    except ValueError as e:
+        logger.warning(f"SambaNova API not available for question generation: {str(e)}")
+        # Fallback to simple template generation
+        return _generate_template_questions(topic, num_questions, difficulty, question_type)
     except Exception as e:
         logger.error(f"Error generating questions from book content: {str(e)}", exc_info=True)
-        raise
+        # Fallback to template generation
+        logger.warning("Falling back to template-based question generation...")
+        return _generate_template_questions(topic, num_questions, difficulty, question_type)
 
-@app.post("/api/analyze-prescription", response_model=PrescriptionAnalysisResponse)
-async def analyze_prescription(request: PrescriptionAnalysisRequest):
+def _generate_template_questions(
+    topic: str,
+    num_questions: int = 5,
+    difficulty: str = "mixed",
+    question_type: str = "mixed"
+) -> List[QuestionItem]:
     """
-    Analyze prescription from OCR extracted text
-    Provides detailed information about:
-    - Medications identified
-    - Their purposes
-    - Dosages and frequencies
-    - Side effects and contraindications
-    - Diagnosed conditions
-    
-    Returns: Detailed prescription analysis report
+    Fallback template-based question generation when LLM is unavailable
     """
-    try:
-        print(f"\n{'='*60}")
-        print(f"[LIST] ANALYZING PRESCRIPTION FROM OCR TEXT")
-        print(f"{'='*60}")
-        
-        extracted_text = request.extracted_text.strip()
-        
-        if not extracted_text or len(extracted_text) < 5:
-            raise HTTPException(
-                status_code=400,
-                detail="No valid text extracted from prescription. Please provide clear medical document."
-            )
-        
-        print(f"Text to analyze ({len(extracted_text)} chars):")
-        print(f"  {extracted_text[:200]}...")
-        
-        # Build analysis prompt for LocalLLM
-        analysis_prompt = f"""Analyze this medical prescription and provide detailed information:
-
-EXTRACTED TEXT:
-{extracted_text}
-
-Please analyze and extract:
-1. Patient Information (name, age, ID if available)
-2. All medications mentioned with:
-   - Full medication names
-   - Dosages
-   - Frequencies
-   - Purposes/indications
-   - Possible side effects
-   - Contraindications
-3. Diagnosed conditions or symptoms
-4. Overall assessment
-
-Format your response as a structured medical report."""
-        
-        # Use LocalLLM to analyze
-        print(f"[SEARCH] Analyzing prescription structure...")
-        
-        # Create analysis from extracted text using context
-        analysis_text = _analyze_prescription_structure(
-            extracted_text,
-            patient_name=request.patient_name,
-            patient_age=request.patient_age,
-            patient_id=request.patient_id
-        )
-        
-        # Parse medication info from text
-        medications = _extract_medications(extracted_text, analysis_text)
-        conditions = _extract_conditions(extracted_text, analysis_text)
-        
-        # Build patient info
-        patient_info = {
-            "name": request.patient_name or "Not specified",
-            "age": request.patient_age or "Not specified",
-            "id": request.patient_id or "Not specified",
-            "date": datetime.now().strftime("%Y-%m-%d")
-        }
-        
-        # Generate detailed report
-        detailed_report = _generate_detailed_report(
-            patient_info,
-            medications,
-            conditions,
-            extracted_text
-        )
-        
-        # Calculate confidence
-        confidence = min(1.0, (len(medications) * 0.3 + len(conditions) * 0.2 + 0.5))
-        
-        print(f"[OK] Analysis complete!")
-        print(f"   Medications found: {len(medications)}")
-        print(f"   Conditions: {len(conditions)}")
-        print(f"   Confidence: {confidence:.1%}")
-        
-        return PrescriptionAnalysisResponse(
-            patient_info=patient_info,
-            extracted_medications=medications,
-            diagnosed_conditions=conditions,
-            analysis_summary=f"Found {len(medications)} medications for treating {len(conditions)} conditions.",
-            detailed_report=detailed_report,
-            confidence_score=confidence
-        )
+    questions = []
     
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Prescription analysis error: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Prescription analysis failed: {str(e)}"
-        )
-
-def _analyze_prescription_structure(text: str, patient_name: str = None, patient_age: int = None, patient_id: str = None) -> str:
-    """Analyze prescription structure and extract key information"""
-    analysis = []
-    
-    # Extract date if present
-    import re
-    date_patterns = [r'\d{1,2}/\d{1,2}/\d{2,4}', r'\d{4}-\d{2}-\d{2}']
-    dates = []
-    for pattern in date_patterns:
-        dates.extend(re.findall(pattern, text))
-    
-    if dates:
-        analysis.append(f"📅 Date: {dates[0]}")
-    
-    # Extract common medication terms
-    medication_keywords = ['mg', 'ml', 'tablet', 'capsule', 'twice', 'daily', 'morning', 'evening', 
-                          'rx', 'prescription', 'dosage', 'frequency']
-    found_keywords = [kw for kw in medication_keywords if kw.lower() in text.lower()]
-    
-    if found_keywords:
-        analysis.append(f"💊 Medication indicators: {', '.join(found_keywords)}")
-    
-    # Extract symptom/condition keywords
-    symptom_keywords = ['pain', 'fever', 'cough', 'headache', 'nausea', 'dizziness', 
-                       'restlessness', 'infection', 'inflammation', 'giddiness', 'settlesness']
-    found_symptoms = [kw for kw in symptom_keywords if kw.lower() in text.lower()]
-    
-    if found_symptoms:
-        analysis.append(f"🩺 Symptoms/Conditions: {', '.join(found_symptoms)}")
-    
-    return "\n".join(analysis) if analysis else "Prescription structure analyzed"
-
-def _extract_medications(ocr_text: str, analysis_text: str) -> List[MedicationInfo]:
-    """Extract medication information from OCR text"""
-    medications = []
-    
-    # Common medication patterns
-    medication_patterns = [
-        {'name': 'Paracetamol', 'purpose': 'Pain relief and fever reduction', 'side_effects': 'Generally safe, rare liver issues'},
-        {'name': 'Citrus', 'purpose': 'Vitamin C supplementation, antioxidant', 'side_effects': 'Rare gastrointestinal issues'},
-        {'name': 'Adeanok', 'purpose': 'Fluid supplement, electrolyte balance', 'side_effects': 'Rare allergic reactions'},
-        {'name': 'DRS', 'purpose': 'Dietary supplement', 'side_effects': 'Generally well tolerated'},
-    ]
-    
-    # Search for medications in OCR text
-    for pattern in medication_patterns:
-        if pattern['name'].lower() in ocr_text.lower():
-            # Extract dosage if mentioned
-            import re
-            dosage_match = re.search(r'(\d+)\s*(mg|ml|g)', ocr_text, re.IGNORECASE)
-            dosage = dosage_match.group(0) if dosage_match else "As prescribed"
-            
-            freq_match = re.search(r'(twice|once|thrice|daily|morning|evening|night|pm|am)', ocr_text, re.IGNORECASE)
-            frequency = freq_match.group(0) if freq_match else "As recommended"
-            
-            medications.append(MedicationInfo(
-                name=pattern['name'],
-                dosage=dosage,
-                frequency=frequency,
-                purpose=pattern['purpose'],
-                side_effects=pattern['side_effects'],
-                contraindications="Consult healthcare provider for contraindications"
-            ))
-    
-    return medications
-
-def _extract_conditions(ocr_text: str, analysis_text: str) -> List[str]:
-    """Extract diagnosed conditions from OCR text"""
-    conditions = []
-    
-    # Common medical conditions
-    condition_keywords = {
-        'fever': 'Fever/High temperature',
-        'cough': 'Cough',
-        'headache': 'Headache',
-        'pain': 'Pain',
-        'nausea': 'Nausea',
-        'giddiness': 'Giddiness/Dizziness',
-        'restlessness': 'Restlessness/Anxiety',
-        'settlesness': 'Condition requiring settling medication',
-        'infection': 'Infection',
-        'inflammation': 'Inflammation'
+    # Define question templates based on medical topics
+    question_templates = {
+        "multiple_choice": [
+            f"What is the primary function of {{topic}}?",
+            f"Which of the following is a risk factor for {{topic}}?",
+            f"What is the most common complication of {{topic}}?",
+            f"Which medication is first-line treatment for {{topic}}?",
+            f"What is the pathophysiology of {{topic}}?"
+        ],
+        "true_false": [
+            f"{{topic}} is inherited as an autosomal dominant condition.",
+            f"Early diagnosis of {{topic}} significantly improves prognosis.",
+            f"{{topic}} is more common in males than females.",
+            f"Lifestyle modifications are ineffective in managing {{topic}}.",
+            f"{{topic}} typically presents in childhood."
+        ],
+        "short_answer": [
+            f"List three risk factors for {{topic}}.",
+            f"Describe the pathophysiology of {{topic}}.",
+            f"What are the clinical features of {{topic}}?",
+            f"Explain the mechanism of action for treating {{topic}}.",
+            f"What diagnostic tests would you order for {{topic}}?"
+        ],
+        "essay": [
+            f"Provide a comprehensive review of {{topic}}, including epidemiology, pathophysiology, clinical presentation, and management options.",
+            f"Discuss the latest advances in the treatment of {{topic}} and their clinical implications.",
+            f"Compare and contrast different approaches to managing {{topic}} based on severity and patient factors."
+        ]
     }
     
-    for keyword, condition in condition_keywords.items():
-        if keyword.lower() in ocr_text.lower():
-            if condition not in conditions:
-                conditions.append(condition)
+    # Select question types
+    if question_type == "mixed":
+        selected_types = ["multiple_choice", "true_false", "short_answer"]
+    else:
+        selected_types = [question_type]
     
-    return conditions if conditions else ["General health maintenance"]
-
-def _generate_detailed_report(patient_info: dict, medications: List[MedicationInfo], 
-                             conditions: List[str], extracted_text: str) -> str:
-    """Generate detailed prescription report"""
-    report = f"""
-╔══════════════════════════════════════════════════════════════════════════════╗
-║                    MEDICAL PRESCRIPTION ANALYSIS REPORT                      ║
-╚══════════════════════════════════════════════════════════════════════════════╝
-
-PATIENT INFORMATION
-═══════════════════════════════════════════════════════════════════════════════
-• Name: {patient_info.get('name', 'Not specified')}
-• Age: {patient_info.get('age', 'Not specified')} years
-• Patient ID: {patient_info.get('id', 'Not specified')}
-• Date: {patient_info.get('date', 'Not available')}
-
-DIAGNOSED CONDITIONS
-═══════════════════════════════════════════════════════════════════════════════
-"""
+    # Generate questions
+    for i in range(num_questions):
+        qtype = selected_types[i % len(selected_types)]
+        
+        # Get template
+        templates = question_templates.get(qtype, question_templates["multiple_choice"])
+        template_idx = (i % len(templates))
+        question_text = templates[template_idx].replace("{topic}", topic)
+        
+        # Determine difficulty
+        if difficulty == "mixed":
+            q_difficulty = ["easy", "medium", "hard"][i % 3]
+        else:
+            q_difficulty = difficulty
+        
+        # Build question object
+        question = QuestionItem(
+            question=question_text,
+            type=qtype,
+            difficulty=q_difficulty,
+        )
+        questions.append(question)
     
-    for i, condition in enumerate(conditions, 1):
-        report += f"{i}. {condition}\n"
-    
-    report += "\nMEDICATIONS PRESCRIBED\n"
-    report += "═══════════════════════════════════════════════════════════════════════════════\n"
-    
-    for i, med in enumerate(medications, 1):
-        report += f"""
-{i}. {med.name}
-   ├─ Dosage: {med.dosage or 'As prescribed'}
-   ├─ Frequency: {med.frequency or 'As recommended'}
-   ├─ Purpose: {med.purpose}
-   ├─ Side Effects: {med.side_effects or 'None reported'}
-   └─ Contraindications: {med.contraindications or 'None known'}
-"""
-    
-    report += """
-IMPORTANT NOTES
-═══════════════════════════════════════════════════════════════════════════════
-* This analysis is based on OCR extraction from medical documents
-* All dosages and frequencies should be verified by a healthcare provider
-* Refer to the original prescription for complete and accurate information
-* If you experience any adverse reactions, seek immediate medical attention
-* Do not exceed recommended dosages without healthcare provider approval
-
-ORIGINAL EXTRACTED TEXT
-═══════════════════════════════════════════════════════════════════════════════
-"""
-    
-    report += extracted_text
-    report += "\n\n═══════════════════════════════════════════════════════════════════════════════"
-    
-    return report
+    return questions
 
 # ============================================================================
 # SIGNATURE ANALYSIS ENDPOINTS (Tesseract + Ollama)
-# ============================================================================
-
-# Initialize signature analyzer
-signature_analyzer = None
-try:
-    from services.signature_analyzer import SignatureAnalyzer
-    signature_analyzer = SignatureAnalyzer(llm=llm)
-    logger.info("[OK] Signature analyzer initialized with Tesseract + Ollama")
-except ImportError as e:
-    logger.warning(f"[WARN] Signature analyzer not available: {str(e)}")
-except Exception as e:
-    logger.warning(f"[WARN] Error initializing signature analyzer: {str(e)}")
-
-class SignatureAnalysisRequest(BaseModel):
-    patient_name: Optional[str] = None
-    patient_age: Optional[int] = None
-    patient_id: Optional[str] = None
-
-class SignatureAnalysisResponse(BaseModel):
-    success: bool
-    extracted_text: str
-    ocr_confidence: float
-    ocr_word_count: int
-    analysis: str
-    medications: List[str]
-    warnings: List[str]
-    ai_analysis_available: bool
-
-@app.post("/api/analyze-signature-tesseract", response_model=SignatureAnalysisResponse)
-async def analyze_signature_tesseract(
-    file: UploadFile = File(...),
-    patient_name: Optional[str] = None,
-    patient_age: Optional[int] = None,
-    patient_id: Optional[str] = None,
-    current_user: User = Depends(get_current_user)
-):
-    """
-    Analyze prescription signature/handwriting using Tesseract OCR and Ollama AI
-    
-    Features:
-    - Extract text from prescription images using Tesseract OCR
-    - Preprocess images for better accuracy
-    - Analyze extracted prescription with Ollama LLM
-    - Identify medications and warnings
-    - Requires authentication
-    """
-    temp_path = None
-    try:
-        if not signature_analyzer:
-            raise HTTPException(
-                status_code=503,
-                detail="Signature analyzer not initialized. Ensure Tesseract is installed."
-            )
-        
-        # Validate image file
-        valid_types = {'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/bmp'}
-        if file.content_type not in valid_types:
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid file type. Upload JPG, PNG, or BMP"
-            )
-        
-        logger.info(f"[TESSERACT] Analyzing prescription signature: {file.filename}")
-        
-        # Save temp file
-        import tempfile
-        temp_dir = tempfile.gettempdir()
-        temp_path = os.path.join(temp_dir, f"sig_{uuid.uuid4()}_{file.filename}")
-        
-        content = await file.read()
-        with open(temp_path, "wb") as f:
-            f.write(content)
-        
-        # Load and analyze image
-        from PIL import Image
-        image = Image.open(temp_path)
-        
-        # Prepare patient info
-        patient_info = None
-        if any([patient_name, patient_age, patient_id]):
-            patient_info = {
-                'name': patient_name,
-                'age': patient_age,
-                'id': patient_id
-            }
-        
-        # Run analysis
-        logger.info("[TESSERACT] Starting Tesseract OCR + Ollama analysis...")
-        result = signature_analyzer.analyze_signature_image(image, patient_info)
-        
-        logger.info(f"[TESSERACT] ✓ Analysis complete: {result['ocr_word_count']} words, {result['ocr_confidence']:.1f}% confidence")
-        
-        return result
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"[TESSERACT] Error analyzing signature: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error analyzing signature: {str(e)}"
-        )
-    finally:
-        # Cleanup
-        if temp_path and os.path.exists(temp_path):
-            try:
-                os.remove(temp_path)
-            except:
-                pass
-
-@app.post("/api/analyze-prescription-ocr", response_model=ChatResponse)
-async def analyze_prescription_ocr(
-    file: UploadFile = File(...),
-    patient_name: Optional[str] = None,
-    patient_age: Optional[int] = None,
-    patient_id: Optional[str] = None,
-    current_user: User = Depends(get_current_user)
-):
-    """
-    Complete prescription analysis: OCR extraction + AI diagnosis
-    
-    Returns:
-    - answer: AI-generated medical analysis
-    - sources: Technical details about OCR processing
-    """
-    temp_path = None
-    try:
-        if not signature_analyzer:
-            raise HTTPException(
-                status_code=503,
-                detail="OCR analyzer not initialized"
-            )
-        
-        # Validate image file
-        valid_types = {'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/bmp'}
-        if file.content_type not in valid_types:
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid file type. Upload JPG, PNG, or BMP"
-            )
-        
-        logger.info(f"[OCR-ANALYSIS] Processing prescription: {file.filename}")
-        
-        # Save temp file
-        import tempfile
-        temp_dir = tempfile.gettempdir()
-        temp_path = os.path.join(temp_dir, f"ocr_{uuid.uuid4()}_{file.filename}")
-        
-        content = await file.read()
-        with open(temp_path, "wb") as f:
-            f.write(content)
-        
-        # Load and analyze image
-        from PIL import Image
-        image = Image.open(temp_path)
-        
-        # Prepare patient info
-        patient_info = None
-        if any([patient_name, patient_age, patient_id]):
-            patient_info = {
-                'name': patient_name,
-                'age': patient_age,
-                'id': patient_id
-            }
-        
-        # Run OCR + Analysis
-        result = signature_analyzer.analyze_signature_image(image, patient_info)
-        
-        # Format response as ChatResponse
-        answer = result.get('analysis', '')
-        if not answer and result.get('success'):
-            answer = f"OCR Extraction Complete\nText Confidence: {result['ocr_confidence']:.1f}%\nWords Extracted: {result['ocr_word_count']}\n\nExtracted Text:\n{result['extracted_text']}"
-        
-        sources = [
-            f"OCR Method: Tesseract",
-            f"Confidence: {result['ocr_confidence']:.1f}%",
-            f"Words: {result['ocr_word_count']}",
-            f"Medications Found: {len(result['medications'])}"
-        ]
-        
-        if result['warnings']:
-            sources.append(f"Warnings: {len(result['warnings'])}")
-        
-        return ChatResponse(
-            answer=answer,
-            sources=sources
-        )
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"[OCR-ANALYSIS] Error: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Prescription analysis failed: {str(e)}"
-        )
-    finally:
-        # Cleanup
-        if temp_path and os.path.exists(temp_path):
-            try:
-                os.remove(temp_path)
-            except:
-                pass
-
 # ============================================================================
 # ROOT ENDPOINT
 # ============================================================================
@@ -2136,8 +1566,6 @@ async def root():
             "GET /api/status - Check system status",
             "POST /api/load-pdfs - Load PDFs from folder",
             "POST /api/chat - Ask a question (search documents)",
-            "POST /api/generate-prescription - Generate prescription from medical images",
-            "POST /api/analyze-prescription - Analyze OCR extracted prescription text with detailed medication info",
             "POST /ai/ocr - Extract text from medical images",
             "POST /ai/interpret_images - Interpret medical images with AI"
         ]

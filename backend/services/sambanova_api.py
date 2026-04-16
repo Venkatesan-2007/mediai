@@ -1,10 +1,11 @@
 """
 SambaNova API Service
-Handles LLM API calls and prompt management
+Handles LLM API calls and prompt management for RAG chatbot and question generation
 """
 import time
+import json
 from sambanova import SambaNova
-from typing import List, Dict
+from typing import List, Dict, Optional
 import logging
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,7 @@ class SambanovaLLM:
             base_url=self.api_url
         )
         self.system_prompt = self._load_system_prompt()
+        self.question_generation_prompt = self._load_question_prompt()
     
     def _load_system_prompt(self) -> str:
         """Load medical system prompt - requesting CONCISE answers"""
@@ -49,13 +51,25 @@ class SambanovaLLM:
             # Fallback prompt - MINIMAL to avoid tokenization issues
             return "You are a medical assistant. Answer using context provided. Keep answers short."
     
+    def _load_question_prompt(self) -> str:
+        """Load question generation system prompt"""
+        return """You are an expert medical educator specializing in creating comprehensive study questions.
+Your role is to generate high-quality practice questions that:
+- Test deep understanding of medical concepts
+- Are clinically relevant and practical
+- Have clear, unambiguous answers
+- Include appropriate difficulty levels
+- Promote critical thinking
+
+Format your response as valid JSON ONLY."""
+
     def _make_api_call(self, messages, max_tokens, temperature, retry_count=0, max_retries=5):
         """
         Make API call with exponential backoff retry for rate limits
         """
         try:
             response = self.client.chat.completions.create(
-                model="Meta-Llama-3.3-70B-Instruct",
+                model="Llama-4-Maverick-17B-128E-Instruct",
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=temperature,
@@ -270,4 +284,138 @@ SUMMARY (concise, key points only):"""
             formatted_chunk = f"[Source: {source} | Relevance: {100 - distance:.1f}%]\n{text}"
             formatted.append(formatted_chunk)
         
-        return formatted
+        return formatted    
+    def generate_questions(
+        self,
+        topic: str,
+        num_questions: int = 5,
+        difficulty: str = "mixed",
+        question_type: str = "mixed",
+        book_content: Optional[str] = None,
+        max_tokens: int = 2048
+    ) -> List[Dict]:
+        """
+        Generate study questions using SambaNova AI
+        
+        Args:
+            topic: Topic to generate questions about
+            num_questions: Number of questions to generate
+            difficulty: easy, medium, hard, or mixed
+            question_type: multiple_choice, true_false, short_answer, essay, or mixed
+            book_content: Optional book content to base questions on
+            max_tokens: Maximum response tokens
+        
+        Returns: List of question dictionaries
+        """
+        try:
+            # Build the prompt
+            content_context = ""
+            if book_content:
+                # Limit content to avoid token overload
+                content_context = f"\nBased on the following medical content:\n---\n{book_content[:3000]}\n---\n"
+            
+            prompt = f"""{content_context}
+Generate exactly {num_questions} MEDICAL study questions about "{topic}".
+
+Requirements:
+- Difficulty levels: {difficulty}
+- Question types: {question_type}
+- Each question must have clear, unambiguous answers
+- Include clinical relevance where applicable
+- Provide explanation for each answer
+
+Format your response as valid JSON array with this structure:
+[
+  {{
+    "question": "question text",
+    "type": "multiple_choice|true_false|short_answer|essay",
+    "difficulty": "easy|medium|hard",
+    "options": ["A) ...", "B) ...", "C) ...", "D) ..."],  // for multiple_choice only
+    "correct_answer": "text answer or 'A'",
+    "explanation": "why this answer is correct"
+  }}
+]
+
+IMPORTANT: Return ONLY valid JSON, no markdown, no extra text."""
+            
+            logger.info(f"Generating {num_questions} {difficulty} {question_type} questions about '{topic}'")
+            
+            response = self._make_api_call(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": self.question_generation_prompt
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                max_tokens=max_tokens,
+                temperature=0.5  # Moderate temp for structured questions
+            )
+            
+            if response.choices and len(response.choices) > 0:
+                response_text = response.choices[0].message.content.strip()
+                
+                # Parse JSON response
+                try:
+                    # Try to extract JSON if wrapped in markdown
+                    if "```json" in response_text:
+                        response_text = response_text.split("```json")[1].split("```")[0].strip()
+                    elif "```" in response_text:
+                        response_text = response_text.split("```")[1].split("```")[0].strip()
+                    
+                    questions = json.loads(response_text)
+                    logger.info(f"✓ Generated {len(questions)} questions using SambaNova")
+                    return questions
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse question JSON: {str(e)}")
+                    logger.error(f"Response was: {response_text[:500]}")
+                    raise ValueError(f"Invalid JSON response from SambaNova API: {str(e)}")
+            else:
+                raise ValueError("No response from SambaNova API")
+        
+        except Exception as e:
+            error_str = str(e)
+            if "rate_limit" in error_str.lower() or "429" in error_str:
+                logger.warning(f"Rate limited during question generation: {str(e)}")
+                raise Exception("API rate limit exceeded. Please try again in a moment.")
+            else:
+                logger.error(f"Question generation error: {str(e)}")
+                raise
+    
+    def extract_json_from_response(self, response_text: str) -> Dict:
+        """
+        Extract JSON from API response, handling markdown and formatting variations
+        
+        Args:
+            response_text: Raw response text from API
+        
+        Returns: Parsed JSON dictionary
+        """
+        try:
+            # Try direct parse first
+            return json.loads(response_text)
+        except json.JSONDecodeError:
+            pass
+        
+        # Try removing markdown code blocks
+        if "```json" in response_text:
+            response_text = response_text.split("```json")[1].split("```")[0].strip()
+        elif "```" in response_text:
+            response_text = response_text.split("```")[1].split("```")[0].strip()
+        
+        try:
+            return json.loads(response_text)
+        except json.JSONDecodeError as e:
+            # Try to find JSON array or object
+            import re
+            json_match = re.search(r'\{.*\}|\[.*\]', response_text, re.DOTALL)
+            if json_match:
+                try:
+                    return json.loads(json_match.group())
+                except json.JSONDecodeError:
+                    pass
+            
+            raise ValueError(f"Could not extract JSON from response: {str(e)}")
