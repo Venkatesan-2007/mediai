@@ -43,7 +43,7 @@ const BookCard = ({ book, onOpen, onAskFromBook }) => {
                 <div className="flex items-center justify-between text-xs text-gray-400 mb-4">
                     <span>📘 {book.edition}</span>
                     <span>📅 {book.year}</span>
-                    <span className={`px-2 py-0.5 rounded ${book.type === 'Core' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
+                    <span className={`px-2 py-0.5 rounded ${book.type === 'Core' ? 'bg-blue-100 text-blue-700' : 'bg-pink-100 text-pink-700'}`}>
                         {book.type}
                     </span>
                 </div>

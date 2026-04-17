@@ -114,7 +114,7 @@
 .new-chat-btn:hover {
   opacity: 0.9;
   transform: translateY(-1px);
-  box-shadow: 0 6px 20px rgba(99,102,241,0.4);
+  box-shadow: 0 6px 20px rgba(236,72,153,0.4);
 }
 .new-chat-btn svg { width: 16px; height: 16px; }
 
@@ -167,7 +167,7 @@
   margin-bottom: 2px;
 }
 .history-item:hover { background: rgba(255,255,255,0.05); color: #e2e8f0; }
-.history-item-active { background: rgba(99,102,241,0.15) !important; color: #a78bfa !important; }
+.history-item-active { background: rgba(236,72,153,0.15) !important; color: #ec4899 !important; }
 .history-item svg { width: 15px; height: 15px; flex-shrink: 0; }
 .history-item span { overflow: hidden; text-overflow: ellipsis; }
 
@@ -305,9 +305,9 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  background: rgba(99,102,241,0.15);
-  border: 1px solid rgba(99,102,241,0.3);
-  color: #a78bfa;
+  background: rgba(236,72,153,0.15);
+  border: 1px solid rgba(236,72,153,0.3);
+  color: #ec4899;
   font-size: 11px;
   font-weight: 600;
   padding: 4px 10px;
@@ -385,7 +385,7 @@
   background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
   border-bottom-right-radius: 4px;
   color: #fff;
-  box-shadow: 0 4px 16px rgba(99,102,241,0.35);
+  box-shadow: 0 4px 16px rgba(236,72,153,0.35);
 }
 
 .error-bubble {
@@ -409,9 +409,9 @@
 }
 .sources-label { font-size: 11px; font-weight: 600; color: #64748b; margin-right: 4px; }
 .source-tag {
-  background: rgba(99,102,241,0.12);
-  border: 1px solid rgba(99,102,241,0.25);
-  color: #a78bfa;
+  background: rgba(236,72,153,0.12);
+  border: 1px solid rgba(236,72,153,0.25);
+  color: #ec4899;
   font-size: 10px;
   padding: 2px 8px;
   border-radius: 12px;
@@ -478,8 +478,8 @@
   transition: border-color 0.2s, box-shadow 0.2s;
 }
 .input-wrapper:focus-within {
-  border-color: rgba(99,102,241,0.5);
-  box-shadow: 0 0 0 3px rgba(99,102,241,0.12);
+  border-color: rgba(236,72,153,0.5);
+  box-shadow: 0 0 0 3px rgba(236,72,153,0.12);
 }
 
 .chat-textarea {
@@ -516,7 +516,7 @@
 }
 .send-btn:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 4px 14px rgba(99,102,241,0.5);
+  box-shadow: 0 4px 14px rgba(236,72,153,0.5);
 }
 .send-btn:disabled { opacity: 0.35; cursor: not-allowed; transform: none; }
 .send-btn svg { width: 18px; height: 18px; color: #fff; }

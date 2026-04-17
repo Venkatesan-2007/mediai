@@ -37,12 +37,12 @@ const DashboardCards = ({ progress, questionsToday, upcomingExams }) => {
             {/* Questions Today Card */}
             <div className="card-soft p-5 animate-slide-in delay-100">
                 <div className="flex items-center justify-between mb-3">
-                    <div className="w-12 h-12 bg-gradient-to-br from-purple-400 to-purple-600 rounded-xl flex items-center justify-center shadow-soft">
+                    <div className="w-12 h-12 bg-gradient-to-br from-pink-300 to-pink-500 rounded-xl flex items-center justify-center shadow-soft">
                         <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                         </svg>
                     </div>
-                    <span className="text-3xl font-bold text-purple-600">{questionsToday}</span>
+                    <span className="text-3xl font-bold text-pink-500">{questionsToday}</span>
                 </div>
                 <h3 className="text-gray-600 font-medium">Questions Today</h3>
                 <p className="text-gray-400 text-sm mt-1">Keep learning!</p>
@@ -51,16 +51,16 @@ const DashboardCards = ({ progress, questionsToday, upcomingExams }) => {
             {/* Upcoming Exams Card */}
             <div className="card-soft p-5 animate-slide-in delay-200">
                 <div className="flex items-center justify-between mb-3">
-                    <div className="w-12 h-12 bg-gradient-to-br from-amber-400 to-orange-500 rounded-xl flex items-center justify-center shadow-soft">
+                    <div className="w-12 h-12 bg-gradient-to-br from-pink-300 to-rose-500 rounded-xl flex items-center justify-center shadow-soft">
                         <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
                         </svg>
                     </div>
-                    <span className="text-3xl font-bold text-amber-600">{upcomingExams.length}</span>
+                    <span className="text-3xl font-bold text-pink-600">{upcomingExams.length}</span>
                 </div>
                 <h3 className="text-gray-600 font-medium">Upcoming Exams</h3>
                 {nearestExam && (
-                    <p className="text-amber-500 text-sm mt-1">
+                    <p className="text-pink-500 text-sm mt-1">
                         📅 {nearestExam.name} in {nearestExam.daysLeft} days
                     </p>
                 )}
@@ -69,16 +69,16 @@ const DashboardCards = ({ progress, questionsToday, upcomingExams }) => {
             {/* Study Streak Card */}
             <div className="card-soft p-5 animate-slide-in delay-300">
                 <div className="flex items-center justify-between mb-3">
-                    <div className="w-12 h-12 bg-gradient-to-br from-green-400 to-teal-500 rounded-xl flex items-center justify-center shadow-soft">
+                    <div className="w-12 h-12 bg-gradient-to-br from-pink-400 to-pink-600 rounded-xl flex items-center justify-center shadow-soft">
                         <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 18.657A8 8 0 016.343 7.343S7 9 9 10c0-2 .5-5 2.986-7C14 5 16.09 5.777 17.656 7.343A7.975 7.975 0 0120 13a7.975 7.975 0 01-2.343 5.657z" />
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.879 16.121A3 3 0 1012.015 11L11 14H9c0 .768.293 1.536.879 2.121z" />
                         </svg>
                     </div>
-                    <span className="text-3xl font-bold text-green-600">7</span>
+                    <span className="text-3xl font-bold text-pink-600">7</span>
                 </div>
                 <h3 className="text-gray-600 font-medium">Day Streak</h3>
-                <p className="text-green-500 text-sm mt-1">🔥 Keep it up!</p>
+                <p className="text-pink-500 text-sm mt-1">🔥 Keep it up!</p>
             </div>
         </div>
     );

@@ -195,7 +195,7 @@ const Dashboard = () => {
                         </h2>
                         <div className="space-y-3">
                             {studentData.recommendedTopics.map((topic) => (
-                                <div key={topic.id} className="p-4 bg-gradient-to-r from-pink-50 to-purple-50 rounded-xl border border-pink-100 hover:shadow-soft transition-shadow">
+                                <div key={topic.id} className="p-4 bg-gradient-to-r from-pink-50 to-white rounded-xl border border-pink-100 hover:shadow-soft transition-shadow">
                                     <div className="flex items-center justify-between">
                                         <span className="text-gray-800 font-medium">{topic.name}</span>
                                         <span className="text-pink-500 text-sm">✨</span>

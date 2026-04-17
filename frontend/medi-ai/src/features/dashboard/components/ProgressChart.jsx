@@ -82,11 +82,11 @@ const ProgressChart = ({ progress }) => {
                     <p className="text-gray-500 text-xs">Topics Completed</p>
                 </div>
                 <div className="text-center">
-                    <p className="text-2xl font-bold text-purple-600">156</p>
+                    <p className="text-2xl font-bold text-pink-500">156</p>
                     <p className="text-gray-500 text-xs">Questions Asked</p>
                 </div>
                 <div className="text-center">
-                    <p className="text-2xl font-bold text-amber-600">12h</p>
+                    <p className="text-2xl font-bold text-pink-400">12h</p>
                     <p className="text-gray-500 text-xs">Study Time</p>
                 </div>
             </div>

@@ -31,16 +31,16 @@ const RecommendationSection = ({ onBookClick }) => {
     return (
         <div className="space-y-6">
             {/* High Yield Topics */}
-            <div className="bg-white rounded-xl border border-gray-100 p-4">
+            <div className="bg-white rounded-xl border border-pink-100 p-4">
                 <h3 className="font-semibold text-gray-800 mb-3 flex items-center">
-                    <span className="w-2 h-2 bg-green-500 rounded-full mr-2"></span>
+                    <span className="w-2 h-2 bg-pink-500 rounded-full mr-2"></span>
                     High-Yield Topics
                 </h3>
                 <div className="flex flex-wrap gap-2">
                     {highYieldTopics.map((item) => (
                         <span
                             key={item.id}
-                            className="px-3 py-1.5 bg-green-50 text-green-700 rounded-lg text-sm font-medium"
+                            className="px-3 py-1.5 bg-pink-50 text-pink-700 rounded-lg text-sm font-medium border border-pink-100"
                         >
                             {item.topic}
                         </span>
@@ -49,22 +49,22 @@ const RecommendationSection = ({ onBookClick }) => {
             </div>
 
             {/* Exam Recommended Chapters */}
-            <div className="bg-white rounded-xl border border-gray-100 p-4">
+            <div className="bg-white rounded-xl border border-pink-100 p-4">
                 <h3 className="font-semibold text-gray-800 mb-3 flex items-center">
-                    <span className="w-2 h-2 bg-blue-500 rounded-full mr-2"></span>
+                    <span className="w-2 h-2 bg-pink-400 rounded-full mr-2"></span>
                     Exam Recommended Chapters
                 </h3>
                 <div className="space-y-2">
                     {examRecommendedChapters.map((item) => (
                         <div
                             key={item.id}
-                            className="flex items-center justify-between p-2 bg-gray-50 rounded-lg"
+                            className="flex items-center justify-between p-2 bg-pink-50 rounded-lg hover:bg-pink-100 transition-colors"
                         >
                             <div>
                                 <span className="text-gray-800 font-medium text-sm">{item.chapter}</span>
                                 <span className="text-gray-400 text-xs ml-2">• {item.book}</span>
                             </div>
-                            <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-medium">
+                            <span className="px-2 py-0.5 bg-pink-100 text-pink-700 rounded text-xs font-medium">
                                 {item.examWeight}
                             </span>
                         </div>
@@ -73,9 +73,9 @@ const RecommendationSection = ({ onBookClick }) => {
             </div>
 
             {/* Most Accessed Books */}
-            <div className="bg-white rounded-xl border border-gray-100 p-4">
+            <div className="bg-white rounded-xl border border-pink-100 p-4">
                 <h3 className="font-semibold text-gray-800 mb-3 flex items-center">
-                    <span className="w-2 h-2 bg-purple-500 rounded-full mr-2"></span>
+                    <span className="w-2 h-2 bg-pink-600 rounded-full mr-2"></span>
                     Most Accessed Books
                 </h3>
                 <div className="space-y-2">
@@ -83,10 +83,10 @@ const RecommendationSection = ({ onBookClick }) => {
                         <button
                             key={book.id}
                             onClick={() => onBookClick(book)}
-                            className="w-full flex items-center justify-between p-2 hover:bg-gray-50 rounded-lg transition-colors text-left"
+                            className="w-full flex items-center justify-between p-2 hover:bg-pink-50 rounded-lg transition-colors text-left"
                         >
                             <div className="flex items-center space-x-3">
-                                <span className="w-6 h-6 bg-gray-200 text-gray-600 rounded-full flex items-center justify-center text-xs font-medium">
+                                <span className="w-6 h-6 bg-pink-100 text-pink-700 rounded-full flex items-center justify-center text-xs font-medium">
                                     {index + 1}
                                 </span>
                                 <div>
@@ -94,7 +94,7 @@ const RecommendationSection = ({ onBookClick }) => {
                                     <span className="text-gray-400 text-xs">{book.author}</span>
                                 </div>
                             </div>
-                            <span className="text-gray-400 text-xs">👁 {book.views}</span>
+                            <span className="text-pink-600 text-xs">👁 {book.views}</span>
                         </button>
                     ))}
                 </div>
